@@ -45,7 +45,26 @@ export type ShiftEvent = {
   device: string;
 };
 
-export type AppEvent = SaleEvent | VoidEvent | LoadEvent | ShiftEvent;
+/**
+ * Botellas que pasan de una hielera a la otra para emparejar cargas: el que se esta quedando
+ * sin nada recibe del que le sobra, y asi acaban juntos. Ni entran ni salen del dia; solo
+ * cambian de mano, por eso el total cargado de la jornada no se mueve.
+ *
+ * Es un evento propio y no una correccion de las cargas a proposito: colapsarlo a "sumale 5
+ * a uno y restale 5 al otro" perderia para siempre de quien era la botella que vendio el otro,
+ * y ese es justo el dato que hace falta el dia que el reparto deje de ser mitad y mitad.
+ */
+export type TransferEvent = {
+  id: string;
+  type: 'transfer';
+  ts: string;
+  from: Vendedor;
+  to: Vendedor;
+  qty: number;
+  device: string;
+};
+
+export type AppEvent = SaleEvent | VoidEvent | LoadEvent | ShiftEvent | TransferEvent;
 
 export type Settings = {
   points: string[];

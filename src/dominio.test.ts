@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import type { AppEvent, LoadEvent, SaleEvent, ShiftEvent, VoidEvent } from './tipos';
+import type {
+  AppEvent,
+  LoadEvent,
+  SaleEvent,
+  ShiftEvent,
+  TransferEvent,
+  VoidEvent,
+} from './tipos';
 import {
   anularUltimaVenta,
   claveFecha,
   crearAnulacion,
+  crearTraspaso,
   duracionLegible,
   enHielera,
   eventosDeArchivo,
@@ -24,6 +32,7 @@ import {
   quitarPunto,
   resumenTexto,
   ritmo,
+  sugerenciaEquilibrio,
   totalDelDia,
   totalPiezas,
   turnoActual,
@@ -55,6 +64,10 @@ function anulacion(id: string, refId: string): VoidEvent {
 
 function turno(parcial: Partial<ShiftEvent> & { id: string; ts: string }): ShiftEvent {
   return { type: 'shift', point: 'Plazuela', vendor: 'Fran', device: 'dev1', ...parcial };
+}
+
+function traspaso(parcial: Partial<TransferEvent> & { id: string; ts: string }): TransferEvent {
+  return { type: 'transfer', from: 'Primo', to: 'Fran', qty: 1, device: 'dev1', ...parcial };
 }
 
 describe('ventasActivas', () => {
@@ -110,14 +123,14 @@ describe('anularUltimaVenta', () => {
       venta({ id: 'a', ts: '2026-07-30T09:00:00' }),
       venta({ id: 'b', ts: '2026-07-30T10:00:00' }),
     ];
-    const nueva = anularUltimaVenta(eventos, 'Plazuela', HOY, 'dev1', '2026-07-30T11:00:00');
+    const nueva = anularUltimaVenta(eventos, 'Plazuela', HOY, 'Fran', 'dev1', '2026-07-30T11:00:00');
     expect(nueva).toMatchObject({ type: 'void', refId: 'b' });
     expect(totalDelDia([...eventos, nueva as VoidEvent], HOY, 'Plazuela', 'calle')).toBe(1);
   });
 
   it('anula la venta entera: -1 sobre un +3 se lleva las tres piezas', () => {
     const eventos: AppEvent[] = [venta({ id: 'a', ts: '2026-07-30T09:00:00', qty: 3 })];
-    const nueva = anularUltimaVenta(eventos, 'Plazuela', HOY, 'dev1', '2026-07-30T11:00:00');
+    const nueva = anularUltimaVenta(eventos, 'Plazuela', HOY, 'Fran', 'dev1', '2026-07-30T11:00:00');
     expect(nueva).toMatchObject({ type: 'void', refId: 'a' });
     expect(totalDelDia([...eventos, nueva as VoidEvent], HOY, 'Plazuela', 'calle')).toBe(0);
   });
@@ -128,17 +141,17 @@ describe('anularUltimaVenta', () => {
       venta({ id: 'b', ts: '2026-07-30T10:00:00', qty: 1 }),
     ];
     for (const restante of [2, 0]) {
-      const nueva = anularUltimaVenta(eventos, 'Plazuela', HOY, 'dev1', '2026-07-30T11:00:00');
+      const nueva = anularUltimaVenta(eventos, 'Plazuela', HOY, 'Fran', 'dev1', '2026-07-30T11:00:00');
       expect(nueva).not.toBeNull();
       eventos = [...eventos, nueva as VoidEvent];
       expect(totalDelDia(eventos, HOY, 'Plazuela', 'calle')).toBe(restante);
     }
-    expect(anularUltimaVenta(eventos, 'Plazuela', HOY, 'dev1', '2026-07-30T11:00:00')).toBeNull();
+    expect(anularUltimaVenta(eventos, 'Plazuela', HOY, 'Fran', 'dev1', '2026-07-30T11:00:00')).toBeNull();
   });
 
   it('nunca borra ni edita: el historico solo crece', () => {
     const eventos: AppEvent[] = [venta({ id: 'a', ts: '2026-07-30T09:00:00', qty: 3 })];
-    const nueva = anularUltimaVenta(eventos, 'Plazuela', HOY, 'dev1', '2026-07-30T11:00:00');
+    const nueva = anularUltimaVenta(eventos, 'Plazuela', HOY, 'Fran', 'dev1', '2026-07-30T11:00:00');
     const historico = [...eventos, nueva as VoidEvent];
     expect(historico).toHaveLength(2);
     expect(historico[0]).toEqual(eventos[0]);
@@ -153,8 +166,38 @@ describe('anularUltimaVenta', () => {
       venta({ id: 'anulada', ts: '2026-07-30T09:00:00' }),
       anulacion('v1', 'anulada'),
     ];
-    expect(anularUltimaVenta(base, 'Plazuela', HOY, 'dev1', '2026-07-30T11:00:00')).toBeNull();
-    expect(ultimaVentaActiva(base, 'Plazuela', HOY)).toBeNull();
+    expect(
+      anularUltimaVenta(base, 'Plazuela', HOY, 'Fran', 'dev1', '2026-07-30T11:00:00')
+    ).toBeNull();
+    expect(ultimaVentaActiva(base, 'Plazuela', HOY, 'Fran')).toBeNull();
+  });
+
+  /**
+   * El descuadre que trae centralizar el registro en un solo telefono: los dos venden en el
+   * mismo punto, asi que sin filtrar por vendedor el -1 de uno se lleva la pieza del otro.
+   * No lo avisa nadie — el total del dia y el dinero salen identicos — solo cambia a quien
+   * se le acredito.
+   */
+  it('anula la del vendedor activo, no la del otro que vende en el mismo punto', () => {
+    const eventos: AppEvent[] = [
+      venta({ id: 'fran1', ts: '2026-07-30T09:00:00' }),
+      venta({ id: 'primo1', ts: '2026-07-30T09:01:00', vendor: 'Primo' }),
+    ];
+    const nueva = anularUltimaVenta(eventos, 'Plazuela', HOY, 'Fran', 'dev1', '2026-07-30T09:02:00');
+    expect(nueva).toMatchObject({ refId: 'fran1' });
+
+    const despues = [...eventos, nueva as VoidEvent];
+    expect(hieleraDe(despues, 'Fran', HOY).vendido).toBe(0);
+    expect(hieleraDe(despues, 'Primo', HOY).vendido).toBe(1);
+  });
+
+  it('sin ventas propias no anula la del otro: devuelve null y el boton queda apagado', () => {
+    const eventos: AppEvent[] = [venta({ id: 'primo1', ts: '2026-07-30T09:00:00', vendor: 'Primo' })];
+    expect(ultimaVentaActiva(eventos, 'Plazuela', HOY, 'Fran')).toBeNull();
+    expect(
+      anularUltimaVenta(eventos, 'Plazuela', HOY, 'Fran', 'dev1', '2026-07-30T11:00:00')
+    ).toBeNull();
+    expect(ultimaVentaActiva(eventos, 'Plazuela', HOY, 'Primo')?.id).toBe('primo1');
   });
 
   it('ultimaVentaActiva apunta a la misma venta que anularia el boton', () => {
@@ -162,8 +205,8 @@ describe('anularUltimaVenta', () => {
       venta({ id: 'a', ts: '2026-07-30T09:00:00' }),
       venta({ id: 'b', ts: '2026-07-30T10:00:00' }),
     ];
-    const nueva = anularUltimaVenta(eventos, 'Plazuela', HOY, 'dev1', '2026-07-30T11:00:00');
-    expect(ultimaVentaActiva(eventos, 'Plazuela', HOY)?.id).toBe(nueva?.refId);
+    const nueva = anularUltimaVenta(eventos, 'Plazuela', HOY, 'Fran', 'dev1', '2026-07-30T11:00:00');
+    expect(ultimaVentaActiva(eventos, 'Plazuela', HOY, 'Fran')?.id).toBe(nueva?.refId);
   });
 
   it('la pieza anulada regresa a la hielera', () => {
@@ -172,7 +215,7 @@ describe('anularUltimaVenta', () => {
       venta({ id: 'a', ts: '2026-07-30T09:00:00', qty: 3 }),
     ];
     expect(enHielera(eventos, 'Fran', HOY)).toBe(15);
-    const nueva = anularUltimaVenta(eventos, 'Plazuela', HOY, 'dev1', '2026-07-30T11:00:00');
+    const nueva = anularUltimaVenta(eventos, 'Plazuela', HOY, 'Fran', 'dev1', '2026-07-30T11:00:00');
     expect(enHielera([...eventos, nueva as VoidEvent], 'Fran', HOY)).toBe(18);
   });
 });
@@ -388,6 +431,8 @@ describe('hieleraDe', () => {
     expect(hieleraDe(eventos, 'Fran', HOY)).toEqual({
       vendedor: 'Fran',
       cargado: 60,
+      recibido: 0,
+      entregado: 0,
       vendido: 3,
       restante: 57,
       sinCarga: false,
@@ -503,19 +548,23 @@ describe('cuadre del dia', () => {
     venta({ id: 'd', ts: '2026-07-30T11:00:00', qty: 20, vendor: 'Primo' }),
   ];
 
-  it('cargadas = vendidas + restantes para cada vendedor', () => {
+  it('cargadas + recibidas = vendidas + pasadas + restantes para cada vendedor', () => {
     for (const h of hieleras(eventos, HOY)) {
-      expect(h.cargado).toBe(h.vendido + h.restante);
-      expect(h.cuadra).toBe(true);
+      expect(h.cargado + h.recibido).toBe(h.vendido + h.entregado + h.restante);
     }
   });
 
-  it('cuadra tambien cuando el restante es negativo', () => {
+  /**
+   * `cuadra` tiene que comprobar algo que pueda salir falso. Comparar `restante` contra los
+   * campos de los que se deriva daria cierto siempre y no verificaria nada: la senal real es
+   * que nadie haya vendido mas piezas de las que tuvo en las manos.
+   */
+  it('NO cuadra cuando el restante es negativo', () => {
     const primo = hieleraDe(eventos, 'Primo', HOY);
-    expect(primo).toMatchObject({ cargado: 18, vendido: 20, restante: -2, cuadra: true });
+    expect(primo).toMatchObject({ cargado: 18, vendido: 20, restante: -2, cuadra: false });
   });
 
-  it('cuadra sin ningun movimiento: 0 = 0 + 0', () => {
+  it('cuadra sin ningun movimiento', () => {
     expect(hieleraDe([], 'Fran', HOY)).toMatchObject({
       cargado: 0,
       vendido: 0,
@@ -533,6 +582,176 @@ describe('cuadre del dia', () => {
 
   it('hieleras devuelve siempre a los dos vendedores', () => {
     expect(hieleras([], HOY).map((h) => h.vendedor)).toEqual(['Fran', 'Primo']);
+  });
+});
+
+describe('traspasos entre hieleras', () => {
+  const HOY = '2026-07-30';
+
+  /**
+   * El escenario real: Fran se acaba su carga, Primo le pasa de las suyas para acabar juntos,
+   * y Fran las vende como suyas. Antes del traspaso esto dejaba a Fran en -5 con el aviso
+   * "falta registrar una carga" (que era mentira) y a Primo con 5 piezas fantasma que ya no
+   * traia. Ahora los dos cuadran y el dia sigue habiendo cargado 36, no 41.
+   */
+  it('cuadra a los dos cuando uno vende de las botellas del otro', () => {
+    const eventos: AppEvent[] = [
+      carga({ id: 'c1', ts: '2026-07-30T07:00:00', qty: 18 }),
+      carga({ id: 'c2', ts: '2026-07-30T07:00:00', qty: 18, vendor: 'Primo' }),
+      venta({ id: 'f1', ts: '2026-07-30T10:00:00', qty: 18 }),
+      traspaso({ id: 't1', ts: '2026-07-30T11:00:00', from: 'Primo', to: 'Fran', qty: 5 }),
+      venta({ id: 'f2', ts: '2026-07-30T11:30:00', qty: 5 }),
+      venta({ id: 'p1', ts: '2026-07-30T12:00:00', qty: 13, vendor: 'Primo' }),
+    ];
+
+    expect(hieleraDe(eventos, 'Fran', HOY)).toMatchObject({
+      cargado: 18,
+      recibido: 5,
+      entregado: 0,
+      vendido: 23,
+      restante: 0,
+      cuadra: true,
+    });
+    expect(hieleraDe(eventos, 'Primo', HOY)).toMatchObject({
+      cargado: 18,
+      recibido: 0,
+      entregado: 5,
+      vendido: 13,
+      restante: 0,
+      cuadra: true,
+    });
+
+    // Lo que se puede contar contra el almacen: el traspaso no infla lo que salio de casa.
+    const salieron = hieleras(eventos, HOY).reduce((s, h) => s + h.cargado, 0);
+    expect(salieron).toBe(36);
+  });
+
+  it('el traspaso no es una venta: el dinero del dia no se mueve', () => {
+    const base: AppEvent[] = [
+      carga({ id: 'c1', ts: '2026-07-30T07:00:00', qty: 18, vendor: 'Primo' }),
+      venta({ id: 'f1', ts: '2026-07-30T10:00:00', qty: 4 }),
+    ];
+    const conTraspaso: AppEvent[] = [
+      ...base,
+      traspaso({ id: 't1', ts: '2026-07-30T11:00:00', from: 'Primo', to: 'Fran', qty: 9 }),
+    ];
+    expect(ventasActivas(conTraspaso)).toEqual(ventasActivas(base));
+    expect(totalPiezas(ventasActivas(conTraspaso))).toBe(4);
+  });
+
+  it('va en los dos sentidos y varios el mismo dia', () => {
+    const eventos: AppEvent[] = [
+      carga({ id: 'c1', ts: '2026-07-30T07:00:00', qty: 20 }),
+      carga({ id: 'c2', ts: '2026-07-30T07:00:00', qty: 20, vendor: 'Primo' }),
+      traspaso({ id: 't1', ts: '2026-07-30T10:00:00', from: 'Primo', to: 'Fran', qty: 6 }),
+      traspaso({ id: 't2', ts: '2026-07-30T15:00:00', from: 'Fran', to: 'Primo', qty: 2 }),
+    ];
+    expect(hieleraDe(eventos, 'Fran', HOY)).toMatchObject({
+      recibido: 6,
+      entregado: 2,
+      restante: 24,
+    });
+    expect(hieleraDe(eventos, 'Primo', HOY)).toMatchObject({
+      recibido: 2,
+      entregado: 6,
+      restante: 16,
+    });
+  });
+
+  it('un traspaso anulado devuelve las piezas a su hielera', () => {
+    const base: AppEvent[] = [
+      carga({ id: 'c1', ts: '2026-07-30T07:00:00', qty: 18, vendor: 'Primo' }),
+      traspaso({ id: 't1', ts: '2026-07-30T11:00:00', from: 'Primo', to: 'Fran', qty: 5 }),
+    ];
+    expect(hieleraDe(base, 'Primo', HOY).restante).toBe(13);
+    const anulado = [...base, anulacion('v1', 't1')];
+    expect(hieleraDe(anulado, 'Primo', HOY).restante).toBe(18);
+    expect(hieleraDe(anulado, 'Fran', HOY).recibido).toBe(0);
+  });
+
+  it('no arrastra traspasos de otros dias', () => {
+    const eventos: AppEvent[] = [
+      traspaso({ id: 'ayer', ts: '2026-07-29T11:00:00', from: 'Primo', to: 'Fran', qty: 9 }),
+      carga({ id: 'c1', ts: '2026-07-30T07:00:00', qty: 18 }),
+    ];
+    expect(hieleraDe(eventos, 'Fran', HOY)).toMatchObject({ recibido: 0, restante: 18 });
+  });
+
+  /** Recibir botellas es tener botellas: el restante ya significa algo aunque no haya cargado. */
+  it('recibir quita el sinCarga aunque nunca haya cargado', () => {
+    const eventos: AppEvent[] = [
+      traspaso({ id: 't1', ts: '2026-07-30T11:00:00', from: 'Primo', to: 'Fran', qty: 5 }),
+    ];
+    expect(hieleraDe(eventos, 'Fran', HOY)).toMatchObject({ sinCarga: false, restante: 5 });
+    expect(hieleraDe(eventos, 'Primo', HOY)).toMatchObject({ sinCarga: true, restante: -5 });
+  });
+
+  it('crearTraspaso rechaza a uno mismo y las cantidades que no son piezas', () => {
+    const base = { ts: '2026-07-30T11:00:00', device: 'dev1' };
+    expect(crearTraspaso({ ...base, from: 'Fran', to: 'Fran', qty: 5 })).toBeNull();
+    expect(crearTraspaso({ ...base, from: 'Fran', to: 'Primo', qty: 0 })).toBeNull();
+    expect(crearTraspaso({ ...base, from: 'Fran', to: 'Primo', qty: -3 })).toBeNull();
+    expect(crearTraspaso({ ...base, from: 'Fran', to: 'Primo', qty: 2.5 })).toBeNull();
+    expect(crearTraspaso({ ...base, from: 'Primo', to: 'Fran', qty: 5 })).toMatchObject({
+      type: 'transfer',
+      from: 'Primo',
+      to: 'Fran',
+      qty: 5,
+    });
+  });
+
+  it('validarEvento acepta un traspaso bueno y tira los imposibles', () => {
+    const bueno = traspaso({ id: 't1', ts: '2026-07-30T11:00:00', from: 'Primo', to: 'Fran', qty: 5 });
+    expect(validarEvento(bueno)).toEqual(bueno);
+    expect(validarEvento({ ...bueno, to: 'Primo' })).toBeNull();
+    expect(validarEvento({ ...bueno, from: 'Alguien' })).toBeNull();
+    expect(validarEvento({ ...bueno, qty: 0 })).toBeNull();
+    expect(validarEvento({ ...bueno, qty: 1.5 })).toBeNull();
+  });
+
+  it('el merge no duplica un traspaso ya importado', () => {
+    const t = traspaso({ id: 't1', ts: '2026-07-30T11:00:00', from: 'Primo', to: 'Fran', qty: 5 });
+    const resultado = mezclar([t], [t]);
+    expect(resultado).toMatchObject({ nuevos: 0, repetidos: 1 });
+    expect(hieleraDe(resultado.eventos, 'Fran', HOY).recibido).toBe(5);
+  });
+});
+
+describe('sugerenciaEquilibrio', () => {
+  const HOY = '2026-07-30';
+  const traen = (fran: number, primo: number): AppEvent[] => [
+    carga({ id: 'c1', ts: '2026-07-30T07:00:00', qty: fran }),
+    carga({ id: 'c2', ts: '2026-07-30T07:00:00', qty: primo, vendor: 'Primo' }),
+  ];
+  const entre = (donante: number, receptor: number): number =>
+    sugerenciaEquilibrio(
+      hieleraDe(traen(donante, receptor), 'Fran', HOY),
+      hieleraDe(traen(donante, receptor), 'Primo', HOY)
+    );
+
+  it('parte la diferencia para que los dos queden parejos', () => {
+    expect(entre(10, 0)).toBe(5);
+    expect(entre(12, 4)).toBe(4);
+  });
+
+  it('el impar se queda con quien las trae', () => {
+    expect(entre(11, 0)).toBe(5);
+  });
+
+  it('no sugiere nada si el donante no va arriba', () => {
+    expect(entre(5, 5)).toBe(0);
+    expect(entre(3, 9)).toBe(0);
+  });
+
+  it('nunca sugiere mas piezas de las que el donante trae', () => {
+    const eventos: AppEvent[] = [
+      carga({ id: 'c1', ts: '2026-07-30T07:00:00', qty: 2 }),
+      venta({ id: 'p1', ts: '2026-07-30T09:00:00', qty: 10, vendor: 'Primo' }),
+    ];
+    const fran = hieleraDe(eventos, 'Fran', HOY);
+    const primo = hieleraDe(eventos, 'Primo', HOY);
+    expect(primo.restante).toBe(-10);
+    expect(sugerenciaEquilibrio(fran, primo)).toBe(2);
   });
 });
 

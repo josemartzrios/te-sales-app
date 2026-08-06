@@ -4,10 +4,12 @@ import type { Rango } from './dominio';
 import {
   LARGO_MAXIMO_TEXTO,
   NOMBRE_APP,
+  VENDEDORES,
   anularUltimaVenta,
   claveFecha,
   crearAnulacion,
   crearCarga,
+  crearTraspaso,
   crearTurno,
   crearVenta,
   eventosDeArchivo,
@@ -59,6 +61,7 @@ import {
   abrirCargaRetro,
   abrirMayoreo,
   abrirRetro,
+  abrirTraspaso,
   destacarHielera,
   enfocarGasto,
   limpiar,
@@ -166,39 +169,68 @@ function restarUna(punto: string): void {
     eventos,
     punto,
     claveFecha(new Date()),
+    estado.vendedor,
     ajustes.deviceId,
     isoLocal(new Date())
   );
   if (anulacion === null) {
-    toast(`No hay ventas de hoy en ${punto}`);
+    toast(`No hay ventas de ${estado.vendedor} hoy en ${punto}`);
     return;
   }
   if (!aplicarEventos([...eventos, anulacion])) return;
-  toast(`Última venta de ${punto} anulada`);
+  toast(`Última venta de ${estado.vendedor} anulada`);
   render();
   destacarHielera();
 }
 
 /**
- * Marcar lugar abre un turno. Volver a marcar el mismo no registra nada: el turno ya esta abierto
- * y un evento repetido solo partiria en dos un rato que fue uno solo.
+ * Marcar lugar abre el turno de los dos: salen juntos al mismo punto y el registro es de un solo
+ * telefono, asi que pedir el lugar dos veces solo serviria para que se olvide la segunda y las
+ * ventas del otro queden fuera de turno.
+ *
+ * Los dos turnos comparten la marca de tiempo porque llegaron juntos; ordenarPorHora desempata
+ * por id. Al que ya estaba en ese punto no se le escribe nada: un evento repetido partiria en
+ * dos un rato que fue uno solo.
  */
 function marcarLugar(punto: string): void {
   const hoy = claveFecha(new Date());
-  const actual = turnoActual(eventos, estado.vendedor, hoy);
-  if (actual !== null && actual.point === punto) {
-    toast(`${estado.vendedor} ya está en ${punto}`);
+  const ts = isoLocal(new Date());
+  const llegan = VENDEDORES.filter((v) => turnoActual(eventos, v, hoy)?.point !== punto);
+
+  if (llegan.length === 0) {
+    toast(`Ya están en ${punto}`);
     return;
   }
-  const turno = crearTurno({
+  const turnos = llegan.map((v) =>
+    crearTurno({ ts, point: punto, vendor: v, device: ajustes.deviceId })
+  );
+  if (!aplicarEventos([...eventos, ...turnos])) return;
+  toast(`${llegan.join(' y ')} en ${punto}`);
+  render();
+}
+
+/**
+ * Pasar botellas de una hielera a la otra para emparejarlas. No es una venta ni una carga:
+ * el dia no gana ni pierde piezas, solo cambian de mano, y el ingreso del corte no se mueve.
+ */
+function registrarTraspaso(from: Vendedor, to: Vendedor, qty: number): void {
+  const traspaso = crearTraspaso({
     ts: isoLocal(new Date()),
-    point: punto,
-    vendor: estado.vendedor,
+    from,
+    to,
+    qty,
     device: ajustes.deviceId,
   });
-  if (!aplicarEventos([...eventos, turno])) return;
-  toast(`${estado.vendedor} en ${punto}`);
+  if (traspaso === null) {
+    toast('Traspaso invalido');
+    return;
+  }
+  if (!aplicarEventos([...eventos, traspaso])) return;
+  const hoy = claveFecha(new Date());
+  const destino = hieleraDe(eventos, to, hoy);
+  toast(`${from} → ${to} ×${qty} · ${to} lleva ${destino.restante}`, 2500);
   render();
+  destacarHielera();
 }
 
 function cargarHielera(vendedor: Vendedor, qty: number): void {
@@ -236,6 +268,7 @@ const QUE: Record<string, { pregunta: string; aviso: string }> = {
   load: { pregunta: 'esta carga', aviso: 'Carga anulada' },
   shift: { pregunta: 'este lugar', aviso: 'Lugar anulado' },
   sale: { pregunta: 'esta venta', aviso: 'Venta anulada' },
+  transfer: { pregunta: 'este traspaso', aviso: 'Traspaso anulado' },
 };
 
 function anular(id: string): void {
@@ -571,6 +604,12 @@ function vistaActual(): HTMLElement {
           ),
         alAbrirCarga: (v) =>
           abrirCarga(v, (quien) => hieleraDe(eventos, quien, hoy), cargarHielera),
+        alAbrirTraspaso: () =>
+          abrirTraspaso(
+            estado.vendedor,
+            (quien) => hieleraDe(eventos, quien, hoy),
+            registrarTraspaso
+          ),
       });
     case 'hoy':
       return vistaHoy({

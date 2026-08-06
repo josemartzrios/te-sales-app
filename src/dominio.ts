@@ -5,6 +5,7 @@ import type {
   SaleEvent,
   Settings,
   ShiftEvent,
+  TransferEvent,
   Vendedor,
   VoidEvent,
 } from './tipos';
@@ -154,6 +155,30 @@ export function crearCarga(entrada: {
   };
 }
 
+/**
+ * Pasar botellas de una hielera a la otra. null si los datos no describen un traspaso real:
+ * a uno mismo no se le pasa nada, y menos de una pieza tampoco.
+ */
+export function crearTraspaso(entrada: {
+  ts: string;
+  from: Vendedor;
+  to: Vendedor;
+  qty: number;
+  device: string;
+}): TransferEvent | null {
+  if (entrada.from === entrada.to) return null;
+  if (!Number.isInteger(entrada.qty) || entrada.qty < 1) return null;
+  return {
+    id: nuevoId(entrada.device),
+    type: 'transfer',
+    ts: entrada.ts,
+    from: entrada.from,
+    to: entrada.to,
+    qty: entrada.qty,
+    device: entrada.device,
+  };
+}
+
 /** null si el evento no existe o ya fue anulado: se anula una sola vez. Sirve para ventas y cargas. */
 export function crearAnulacion(
   eventos: readonly AppEvent[],
@@ -167,24 +192,33 @@ export function crearAnulacion(
 }
 
 /**
- * La venta que anularia el boton -1: la ultima de calle activa de ese punto ese dia.
+ * La venta que anularia el boton -1: la ultima de calle activa de ese vendedor en ese punto ese dia.
  * La UI la usa para deshabilitar el boton sin repetir el criterio.
+ *
+ * Filtra por vendedor porque los dos venden desde el mismo telefono y en el mismo lugar: sin el
+ * filtro, corregir un toque de mas de uno le borraria una pieza al otro, y eso no lo avisa nadie
+ * — los totales del dia y el dinero salen identicos, solo cambia a quien se le acredito.
  */
 export function ultimaVentaActiva(
   eventos: readonly AppEvent[],
   punto: string,
-  clave: string
+  clave: string,
+  vendedor: Vendedor
 ): SaleEvent | null {
   const candidatas = ordenarPorHora(
     ventasActivas(eventos).filter(
-      (v) => v.point === punto && v.channel === 'calle' && claveFecha(v.ts) === clave
+      (v) =>
+        v.point === punto &&
+        v.channel === 'calle' &&
+        v.vendor === vendedor &&
+        claveFecha(v.ts) === clave
     )
   );
   return candidatas[candidatas.length - 1] ?? null;
 }
 
 /**
- * -1 es correccion, no resta: anula entera la ultima venta de calle del punto ese dia.
+ * -1 es correccion, no resta: anula entera la ultima venta de calle de ese vendedor en el punto.
  * Nunca edita ni borra; si esa venta traia 3 piezas, se van las 3 y se vuelve a capturar.
  * null cuando no hay nada que anular: ahi el boton va deshabilitado.
  */
@@ -192,10 +226,11 @@ export function anularUltimaVenta(
   eventos: readonly AppEvent[],
   punto: string,
   clave: string,
+  vendedor: Vendedor,
   device: string,
   ts: string
 ): VoidEvent | null {
-  const ultima = ultimaVentaActiva(eventos, punto, clave);
+  const ultima = ultimaVentaActiva(eventos, punto, clave, vendedor);
   if (ultima === null) return null;
   return crearAnulacion(eventos, ultima.id, device, ts);
 }
@@ -226,6 +261,19 @@ export function cargasActivas(eventos: readonly AppEvent[]): LoadEvent[] {
 export function cargasDeFecha(eventos: readonly AppEvent[], clave: string): LoadEvent[] {
   const cargas = eventos.filter((e): e is LoadEvent => e.type === 'load' && claveFecha(e.ts) === clave);
   return ordenarPorHora(cargas);
+}
+
+export function traspasosActivos(eventos: readonly AppEvent[]): TransferEvent[] {
+  const anulados = idsAnulados(eventos);
+  return eventos.filter((e): e is TransferEvent => e.type === 'transfer' && !anulados.has(e.id));
+}
+
+/** Todos los traspasos de la fecha, anulados incluidos: la vista Hoy los muestra tachados. */
+export function traspasosDeFecha(eventos: readonly AppEvent[], clave: string): TransferEvent[] {
+  const traspasos = eventos.filter(
+    (e): e is TransferEvent => e.type === 'transfer' && claveFecha(e.ts) === clave
+  );
+  return ordenarPorHora(traspasos);
 }
 
 export function turnosActivos(eventos: readonly AppEvent[]): ShiftEvent[] {
@@ -352,41 +400,63 @@ export function porDia(ventas: readonly SaleEvent[], hoy: Date, dias = 14): Barr
 
 export type Hielera = {
   vendedor: Vendedor;
+  /** Solo lo que salio de casa en su hielera. Los traspasos NO lo mueven: es el dato del almacen. */
   cargado: number;
+  /** Piezas que le pasó el otro vendedor ese dia. */
+  recibido: number;
+  /** Piezas que le pasó al otro vendedor ese dia. */
+  entregado: number;
   vendido: number;
-  /** cargado - vendido. Negativo = vendio mas de lo que registro cargar: falta una carga. */
+  /** cargado + recibido - entregado - vendido. Negativo = vendio mas de lo que tuvo en las manos. */
   restante: number;
-  /** Sin ninguna carga registrada el restante no significa nada: la UI lo dice en vez de mostrar 0. */
+  /** Sin carga ni traspaso recibido el restante no significa nada: la UI lo dice en vez de mostrar 0. */
   sinCarga: boolean;
-  /** cargadas = vendidas + restantes. La linea de verificacion de Hoy cuelga de aqui. */
+  /**
+   * No vendio mas piezas de las que tuvo en las manos. Es la unica verificacion real de la
+   * hielera: `restante` se deriva de los demas campos, asi que compararlos entre si siempre
+   * daria cierto y no comprobaria nada.
+   */
   cuadra: boolean;
 };
 
 /**
  * Piezas que le quedan a un vendedor en la hielera ese dia.
- * Descuenta calle y mayoreo: ambas sacan botellas fisicas de la misma hielera.
+ *
+ * Descuenta calle y mayoreo: ambas sacan botellas fisicas de la misma hielera. Y suma los
+ * traspasos, porque la venta es de quien la hace pero la botella es de quien la cargo: cuando
+ * uno se queda sin nada y el otro le pasa de las suyas, esas piezas dejan de estar en una
+ * hielera y pasan a la otra sin que el dia haya cargado ni una botella mas.
  */
 export function hieleraDe(
   eventos: readonly AppEvent[],
   vendedor: Vendedor,
   clave: string
 ): Hielera {
-  const cargas = cargasActivas(eventos).filter(
-    (c) => c.vendor === vendedor && claveFecha(c.ts) === clave
-  );
-  const ventas = ventasActivas(eventos).filter(
-    (v) => v.vendor === vendedor && claveFecha(v.ts) === clave
-  );
-  const cargado = cargas.reduce((s, c) => s + c.qty, 0);
+  const delDia = <T extends { ts: string }>(lista: readonly T[]): T[] =>
+    lista.filter((e) => claveFecha(e.ts) === clave);
+
+  const cargas = delDia(cargasActivas(eventos)).filter((c) => c.vendor === vendedor);
+  const ventas = delDia(ventasActivas(eventos)).filter((v) => v.vendor === vendedor);
+  const traspasos = delDia(traspasosActivos(eventos));
+
+  const suma = (lista: readonly { qty: number }[]): number =>
+    lista.reduce((s, e) => s + e.qty, 0);
+
+  const cargado = suma(cargas);
+  const recibido = suma(traspasos.filter((t) => t.to === vendedor));
+  const entregado = suma(traspasos.filter((t) => t.from === vendedor));
   const vendido = totalPiezas(ventas);
-  const restante = cargado - vendido;
+  const restante = cargado + recibido - entregado - vendido;
+
   return {
     vendedor,
     cargado,
+    recibido,
+    entregado,
     vendido,
     restante,
-    sinCarga: cargas.length === 0,
-    cuadra: cargado === vendido + restante,
+    sinCarga: cargas.length === 0 && recibido === 0,
+    cuadra: restante >= 0,
   };
 }
 
@@ -404,6 +474,21 @@ export function enHielera(
 
 export function hieleras(eventos: readonly AppEvent[], clave: string): Hielera[] {
   return VENDEDORES.map((v) => hieleraDe(eventos, v, clave));
+}
+
+/**
+ * Cuantas piezas pasar para que los dos queden parejos y acaben juntos, que es para lo que se
+ * cuentan las botellas. El impar se queda con quien las trae: mejor un traspaso de menos que
+ * dejar corto al que las esta cargando.
+ *
+ * 0 cuando no hay nada que emparejar — el donante ya va igual o mas abajo — y nunca mas de lo
+ * que el donante trae, que es todo lo que fisicamente puede pasar de mano.
+ * Es una sugerencia: el numero se puede editar antes de confirmar.
+ */
+export function sugerenciaEquilibrio(donante: Hielera, receptor: Hielera): number {
+  if (donante.restante <= 0) return 0;
+  const mitad = Math.floor((donante.restante - receptor.restante) / 2);
+  return Math.max(0, Math.min(donante.restante, mitad));
 }
 
 // ---------- ritmo ----------
@@ -663,6 +748,17 @@ export function validarEvento(valor: unknown): AppEvent | null {
     return { id, type: 'shift', ts, point, vendor: vendor as Vendedor, device };
   }
 
+  if (type === 'transfer') {
+    const { from, to, qty } = valor as Record<string, unknown>;
+    if (typeof from !== 'string' || !VENDEDORES.includes(from as Vendedor)) return null;
+    if (typeof to !== 'string' || !VENDEDORES.includes(to as Vendedor)) return null;
+    // De uno a si mismo no es un traspaso: entraria como recibido y entregado a la vez y no
+    // moveria nada, pero ensuciaria el historico con una linea que no ocurrio.
+    if (from === to) return null;
+    if (typeof qty !== 'number' || !Number.isInteger(qty) || qty < 1) return null;
+    return { id, type: 'transfer', ts, from: from as Vendedor, to: to as Vendedor, qty, device };
+  }
+
   if (type !== 'sale') return null;
   const { point, channel, vendor, qty, retro } = valor as Record<string, unknown>;
   if (!textoValido(point)) return null;
@@ -820,9 +916,16 @@ export function resumenTexto(
   }
   for (const panel of panelesDelDia(eventos, clave, puntos)) {
     const { hielera, ritmo: r, mejorPunto } = panel;
-    if (hielera.cargado === 0 && hielera.vendido === 0) continue;
+    const sinMovimiento =
+      hielera.cargado === 0 &&
+      hielera.vendido === 0 &&
+      hielera.recibido === 0 &&
+      hielera.entregado === 0;
+    if (sinMovimiento) continue;
     const partes = [`${panel.vendedor}: ${hielera.vendido}`];
     if (!hielera.sinCarga) partes.push(`quedan ${hielera.restante} de ${hielera.cargado}`);
+    if (hielera.recibido > 0) partes.push(`recibió ${hielera.recibido}`);
+    if (hielera.entregado > 0) partes.push(`pasó ${hielera.entregado}`);
     if (r.porHora > 0) partes.push(`${r.porHora}/h`);
     if (mejorPunto !== null) partes.push(`mejor ${mejorPunto.etiqueta}`);
     lineas.push(partes.join(' · '));

@@ -5,6 +5,7 @@ import type {
   SaleEvent,
   Settings,
   ShiftEvent,
+  TransferEvent,
   Vendedor,
 } from './tipos';
 import type { Barra, Hielera, Matriz, PanelVendedor, Rango, Turno } from './dominio';
@@ -41,8 +42,10 @@ import {
   porLugarYHora,
   porPunto,
   porVendedor,
+  sugerenciaEquilibrio,
   totalDelDia,
   totalPiezas,
+  traspasosDeFecha,
   turnoActual,
   turnosDeFecha,
   ultimaVentaActiva,
@@ -193,6 +196,7 @@ export type PropsVender = {
   alMarcarLugar: (punto: string) => void;
   alAbrirMayoreo: () => void;
   alAbrirCarga: (v: Vendedor) => void;
+  alAbrirTraspaso: () => void;
 };
 
 const ID_HIELERA = 'barra-hielera';
@@ -257,10 +261,10 @@ function barraEstado(p: PropsVender): HTMLElement {
  */
 function tarjetaSinLugar(p: PropsVender): HTMLElement {
   return el('section', { clase: 'turno turno-vacio' }, [
-    el('h2', { texto: '¿Dónde estás?' }),
+    el('h2', { texto: '¿Dónde están?' }),
     el('p', {
       clase: 'detalle',
-      texto: `Marca el lugar y todo lo que venda ${p.vendedor} se acredita ahí.`,
+      texto: 'Marca el lugar una vez: abre el turno de los dos y ahí se acredita todo.',
     }),
     el(
       'div',
@@ -296,10 +300,12 @@ function bloqueVenta(p: PropsVender, punto: string): HTMLElement {
   const botonPrincipal = boton(`+1 · ${p.vendedor}`, 'btn-venta', () => p.alVender(punto, 1));
   botonPrincipal.setAttribute('aria-label', `Registrar una venta de ${p.vendedor} en ${punto}`);
 
-  const hayQueAnular = ultimaVentaActiva(p.eventos, punto, p.hoy) !== null;
+  // Por vendedor, no por punto: los dos venden desde este telefono y en este mismo lugar, asi
+  // que un -1 sin filtrar le borraria la pieza al otro sin avisar.
+  const hayQueAnular = ultimaVentaActiva(p.eventos, punto, p.hoy, p.vendedor) !== null;
   const botonRestar = boton('−1', 'btn-chico peligro', () => p.alRestar(punto));
   botonRestar.disabled = !hayQueAnular;
-  botonRestar.setAttribute('aria-label', `Anular la última venta en ${punto}`);
+  botonRestar.setAttribute('aria-label', `Anular la última venta de ${p.vendedor} en ${punto}`);
 
   return el('section', { clase: 'punto' }, [
     botonPrincipal,
@@ -336,6 +342,7 @@ export function vistaVender(p: PropsVender): HTMLElement {
     resumenDeHoy(p),
     el('div', { clase: 'acciones-secundarias' }, [
       boton('Cargar hielera', 'btn-texto', () => p.alAbrirCarga(p.vendedor)),
+      boton('Pasar botellas', 'btn-texto', p.alAbrirTraspaso),
       boton('Mayoreo', 'btn-texto', p.alAbrirMayoreo),
     ]),
   ]);
@@ -365,7 +372,7 @@ function abrirLugar(
       el('h2', { texto: 'Cambiar de lugar' }),
       el('p', {
         clase: 'detalle',
-        texto: 'Desde este momento las ventas se acreditan al lugar nuevo.',
+        texto: 'Desde este momento las ventas de los dos se acreditan al lugar nuevo.',
       }),
       el(
         'div',
@@ -461,6 +468,105 @@ export function abrirCarga(
   modal.showModal();
 }
 
+/**
+ * Pasar botellas de una hielera a la otra. El numero llega precargado con lo que dejaria a los
+ * dos parejos, que es para lo que se cuentan, pero se puede editar: el que decide cuantas pasan
+ * es el que las esta contando, no la app.
+ */
+export function abrirTraspaso(
+  vendedorActual: Vendedor,
+  traeAhora: (v: Vendedor) => Hielera,
+  alConfirmar: (from: Vendedor, to: Vendedor, qty: number) => void
+): void {
+  const otro = (v: Vendedor): Vendedor => VENDEDORES.find((x) => x !== v) ?? v;
+  // Por defecto da el que trae mas: es el caso real, el que se esta quedando sin nada recibe.
+  const sugeridoDonante =
+    traeAhora(otro(vendedorActual)).restante > traeAhora(vendedorActual).restante
+      ? otro(vendedorActual)
+      : vendedorActual;
+
+  const modal = el('dialog', { attrs: { 'aria-label': 'Pasar botellas' } });
+
+  if (typeof modal.showModal !== 'function') {
+    const destino = otro(sugeridoDonante);
+    const parejo = sugerenciaEquilibrio(traeAhora(sugeridoDonante), traeAhora(destino));
+    const respuesta = window.prompt(
+      `Piezas que ${sugeridoDonante} le pasa a ${destino}:`,
+      String(parejo)
+    );
+    const qty = Number(respuesta);
+    if (Number.isInteger(qty) && qty >= 1) alConfirmar(sugeridoDonante, destino, qty);
+    return;
+  }
+
+  const donante = selector(VENDEDORES, sugeridoDonante);
+  const cantidad = entrada('number', '0', { min: '1', step: '1', inputmode: 'numeric' });
+  const estado = el('p', { clase: 'detalle' });
+
+  /** Las dos hieleras en juego, siempre en el sentido del selector: quien da y quien recibe. */
+  const lados = (): { da: Hielera; recibe: Hielera } => {
+    const quienDa = donante.value as Vendedor;
+    return { da: traeAhora(quienDa), recibe: traeAhora(otro(quienDa)) };
+  };
+
+  const botonMitad = boton('Mitad y mitad', 'btn-chico acento', () => {
+    const { da, recibe } = lados();
+    cantidad.value = String(sugerenciaEquilibrio(da, recibe));
+  });
+
+  const refrescar = (): void => {
+    const { da, recibe } = lados();
+    cantidad.value = String(sugerenciaEquilibrio(da, recibe));
+    // Sin carga ni traspaso registrado el restante no significa nada: sugerir la mitad de un
+    // numero que no existe seria inventarla.
+    const aCiegas = da.sinCarga || recibe.sinCarga;
+    botonMitad.disabled = aCiegas;
+    estado.textContent = aCiegas
+      ? 'Falta registrar carga: la app no sabe cuántas trae cada quien.'
+      : `${da.vendedor} trae ${da.restante} · ${recibe.vendedor} trae ${recibe.restante}`;
+  };
+  donante.addEventListener('change', refrescar);
+  refrescar();
+
+  const cerrar = (): void => {
+    modal.close();
+    modal.remove();
+  };
+
+  const confirmar = (): void => {
+    const da = donante.value as Vendedor;
+    const qty = Number(cantidad.value);
+    if (!Number.isInteger(qty) || qty < 1) {
+      toast('Cantidad invalida');
+      return;
+    }
+    cerrar();
+    alConfirmar(da, otro(da), qty);
+  };
+
+  modal.appendChild(
+    el('div', {}, [
+      el('h2', { texto: 'Pasar botellas' }),
+      el('p', {
+        clase: 'detalle',
+        texto: 'Cambian de hielera, no se venden. El total cargado del día no se mueve.',
+      }),
+      campo('Las pasa', donante),
+      campo('Piezas', cantidad),
+      el('div', { clase: 'fila-chica' }, [botonMitad]),
+      estado,
+      el('div', { clase: 'fila-botones' }, [
+        boton('Cancelar', 'btn', cerrar),
+        boton('Pasar', 'btn activo', confirmar),
+      ]),
+    ])
+  );
+
+  document.body.appendChild(modal);
+  modal.addEventListener('cancel', () => modal.remove());
+  modal.showModal();
+}
+
 export function abrirMayoreo(
   puntos: readonly string[],
   alConfirmar: (punto: string, qty: number) => void
@@ -522,51 +628,67 @@ export type PropsHoy = {
   alAbrirCargaRetro: () => void;
 };
 
-/** Linea de verificacion, no formulario: cargadas = vendidas + restantes, por vendedor. */
+/**
+ * Linea de verificacion, no formulario: cargó + recibió = vendió + pasó + lo que queda.
+ * Los traspasos solo se escriben cuando los hubo: en un dia normal la linea es la de siempre.
+ */
 function lineaCuadre(h: Hielera): HTMLElement {
-  const sinMovimiento = h.cargado === 0 && h.vendido === 0;
-  const bien = h.cuadra && h.restante >= 0;
+  const sinMovimiento =
+    h.cargado === 0 && h.vendido === 0 && h.recibido === 0 && h.entregado === 0;
+
+  const separador = (): HTMLElement => el('span', { clase: 'detalle', texto: ' · ' });
+  const cuentas: HTMLElement[] = [el('span', { texto: `Cargó ${h.cargado}` })];
+  if (h.recibido > 0) cuentas.push(separador(), el('span', { texto: `recibió ${h.recibido}` }));
+  if (h.entregado > 0) cuentas.push(separador(), el('span', { texto: `pasó ${h.entregado}` }));
+  cuentas.push(separador(), el('span', { texto: `Vendió ${h.vendido}` }));
+  cuentas.push(
+    separador(),
+    el('span', {
+      clase: h.restante < 0 ? 'negativo' : '',
+      texto: `En hielera ${h.restante}`,
+    })
+  );
 
   return el('div', { clase: 'cuadre-fila' }, [
     el('span', { clase: 'cuadre-vendedor', texto: h.vendedor }),
     sinMovimiento
       ? el('span', { clase: 'detalle', texto: 'sin movimientos' })
-      : el('span', { clase: 'cuadre-cuentas num' }, [
-          el('span', { texto: `Cargó ${h.cargado}` }),
-          el('span', { clase: 'detalle', texto: ' · ' }),
-          el('span', { texto: `Vendió ${h.vendido}` }),
-          el('span', { clase: 'detalle', texto: ' · ' }),
-          el('span', {
-            clase: h.restante < 0 ? 'negativo' : '',
-            texto: `En hielera ${h.restante}`,
-          }),
-        ]),
+      : el('span', { clase: 'cuadre-cuentas num' }, cuentas),
     sinMovimiento
       ? null
       : el('span', {
-          clase: `cuadre-marca ${bien ? 'ok' : 'alerta'}`,
-          texto: bien ? '✓' : '!',
-          attrs: { 'aria-label': bien ? 'cuadra' : 'no cuadra' },
+          clase: `cuadre-marca ${h.cuadra ? 'ok' : 'alerta'}`,
+          texto: h.cuadra ? '✓' : '!',
+          attrs: { 'aria-label': h.cuadra ? 'cuadra' : 'no cuadra' },
         }),
   ]);
+}
+
+/**
+ * El aviso del negativo tiene que decir la causa correcta. Si hubo traspasos, "falta una carga"
+ * es una de dos explicaciones posibles y la otra es que se pasaron mal las piezas; mandar a
+ * registrar una carga que no existio inflaria el cargado del dia contra el almacen.
+ */
+function causaDelNegativo(h: Hielera): string {
+  const hubo = h.recibido > 0 || h.entregado > 0;
+  return hubo
+    ? `${h.vendedor} vendió ${-h.restante} más de las que tuvo: falta una carga, o el traspaso quedó mal contado.`
+    : `${h.vendedor} vendió ${-h.restante} más de lo cargado: falta registrar una carga.`;
 }
 
 function bloqueCuadre(eventos: readonly AppEvent[], fecha: string): HTMLElement {
   const delDia = hieleras(eventos, fecha);
   const faltantes = delDia.filter((h) => h.restante < 0);
+  // Los traspasos se cancelan entre las dos hieleras, asi que este total sigue siendo lo que
+  // de verdad salio de casa y se puede contar contra el almacen.
+  const cargadoDelDia = delDia.reduce((s, h) => s + h.cargado, 0);
 
   return el('section', { clase: 'bloque' }, [
     el('h2', { texto: 'Cuadre del día' }),
-    el('p', { clase: 'detalle', texto: 'Cargadas = vendidas + restantes.' }),
+    el('p', { clase: 'detalle', texto: 'Cargadas + recibidas = vendidas + pasadas + restantes.' }),
     ...delDia.map(lineaCuadre),
-    faltantes.length === 0
-      ? null
-      : el('p', {
-          clase: 'aviso',
-          texto: `${faltantes
-            .map((h) => `${h.vendedor} vendió ${-h.restante} más de lo cargado`)
-            .join(' · ')}: falta registrar una carga.`,
-        }),
+    el('p', { clase: 'detalle num', texto: `Salieron ${cargadoDelDia} piezas de casa.` }),
+    ...faltantes.map((h) => el('p', { clase: 'aviso', texto: causaDelNegativo(h) })),
   ]);
 }
 
@@ -596,6 +718,14 @@ function bloqueTurnos(turnos: readonly Turno[]): HTMLElement {
       ])
     ),
   ]);
+}
+
+/** 'de 18 cargados', y si hubo traspaso tambien de donde salieron las que no cargo el. */
+function pieDeHielera(h: Hielera): string {
+  const partes = [`de ${h.cargado} cargados`];
+  if (h.recibido > 0) partes.push(`+${h.recibido} recibidas`);
+  if (h.entregado > 0) partes.push(`−${h.entregado} pasadas`);
+  return partes.join(' ');
 }
 
 /** Una cifra grande con su rotulo: el tablero se lee de un vistazo, sin interpretar barras. */
@@ -635,7 +765,7 @@ function panelDelVendedor(panel: PanelVendedor, turnos: readonly Turno[]): HTMLE
       metrica(
         'En hielera',
         h.sinCarga ? '—' : String(h.restante),
-        h.sinCarga ? 'sin carga registrada' : `de ${h.cargado} cargados`,
+        h.sinCarga ? 'sin carga registrada' : pieDeHielera(h),
         !h.sinCarga && h.restante <= HIELERA_BAJA ? 'alerta' : ''
       ),
       metrica('Vendió', String(h.vendido), 'piezas'),
@@ -645,12 +775,7 @@ function panelDelVendedor(panel: PanelVendedor, turnos: readonly Turno[]): HTMLE
         r.porHora > 0 ? `por hora · en ${duracionLegible(r.minutos)}` : 'por hora'
       ),
     ]),
-    h.restante < 0
-      ? el('p', {
-          clase: 'aviso',
-          texto: `Vendió ${-h.restante} más de lo cargado: falta registrar una carga.`,
-        })
-      : null,
+    h.restante < 0 ? el('p', { clase: 'aviso', texto: causaDelNegativo(h) }) : null,
     lugar,
     turnos.length === 0 ? null : bloqueTurnos(turnos),
     vendioAlgo ? bloqueBarras('Por lugar', panel.porPunto, true) : null,
@@ -658,13 +783,23 @@ function panelDelVendedor(panel: PanelVendedor, turnos: readonly Turno[]): HTMLE
   ]);
 }
 
-function filaMovimiento(m: SaleEvent | LoadEvent | ShiftEvent): (HTMLElement | null)[] {
+type Movimiento = SaleEvent | LoadEvent | ShiftEvent | TransferEvent;
+
+function filaMovimiento(m: Movimiento): (HTMLElement | null)[] {
   const hora = el('span', { clase: 'num', texto: horaMinuto(m.ts) });
   if (m.type === 'load') {
     return [
       hora,
       el('span', { clase: 'insignia', texto: 'CARGA' }),
       el('span', { clase: 'detalle', texto: m.vendor }),
+      el('span', { clase: 'num', texto: `×${m.qty}` }),
+    ];
+  }
+  if (m.type === 'transfer') {
+    return [
+      hora,
+      el('span', { clase: 'insignia', texto: 'PASA' }),
+      el('span', { texto: `${m.from} → ${m.to}` }),
       el('span', { clase: 'num', texto: `×${m.qty}` }),
     ];
   }
@@ -689,6 +824,7 @@ export function vistaHoy(p: PropsHoy): HTMLElement {
   const ventas = ventasDeFecha(p.eventos, p.fecha);
   const cargas = cargasDeFecha(p.eventos, p.fecha);
   const turnos = turnosDeFecha(p.eventos, p.fecha);
+  const traspasos = traspasosDeFecha(p.eventos, p.fecha);
   const anulados = idsAnulados(p.eventos);
   const activas = ventas.filter((v) => !anulados.has(v.id));
   const paneles = panelesDelDia(p.eventos, p.fecha, p.ajustes.points);
@@ -699,10 +835,11 @@ export function vistaHoy(p: PropsHoy): HTMLElement {
     if (selectorFecha.value !== '') p.alCambiarFecha(selectorFecha.value);
   });
 
-  const movimientos = ordenarPorHora<SaleEvent | LoadEvent | ShiftEvent>([
+  const movimientos = ordenarPorHora<Movimiento>([
     ...ventas,
     ...cargas,
     ...turnos,
+    ...traspasos,
   ]);
   const filas =
     movimientos.length === 0

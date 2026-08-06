@@ -21,13 +21,16 @@ atajos, o se escribe la cantidad) y **Cargar**.
 Hazlo cada mañana. La app no arrastra saldo de ayer: cada día empieza en cero y lo que sobró se vuelve a
 cargar si vuelve a salir. Si a lo largo del día se recarga, se registra otra vez y **se suma**.
 
-### 2. Al llegar a un lugar: marcar dónde estás
+### 2. Al llegar a un lugar: marcar dónde están
 
-Arriba de todo, elegir de quién es la venta (**Fran** o **Primo**). Luego la pantalla pregunta
-**"¿Dónde estás?"**: tocar el lugar. Eso abre el turno.
+La pantalla pregunta **"¿Dónde están?"**: tocar el lugar. Eso abre el turno **de los dos**, porque salen
+juntos al mismo punto. Un solo toque, no uno por vendedor.
 
-Es el único paso nuevo, y hay que hacerlo **antes de la primera venta del lugar**. Sin marcar lugar la app
-no muestra el botón de vender, porque no sabría a dónde acreditar la pieza.
+Hay que hacerlo **antes de la primera venta del lugar**. Sin marcar lugar la app no muestra el botón de
+vender, porque no sabría a dónde acreditar la pieza.
+
+Arriba de todo se elige de quién es la venta (**Fran** o **Primo**). Ese selector decide a quién se
+acredita cada toque — y también a quién le pega el `−1`.
 
 ### 3. Vender
 
@@ -41,28 +44,37 @@ Un toque en el botón grande **`+1 · Fran`** por cada botella. La app guarda so
 ### 4. Al cambiar de lugar
 
 Tocar **Cambiar** en la tarjeta y elegir el lugar nuevo. Ya está: el turno anterior se cierra solo a esa
-hora, no hay botón de "terminar".
+hora, no hay botón de "terminar". Igual que al marcar, mueve a los dos.
 
-Si se cambia de vendedor con el selector de arriba, cada quien conserva su propio lugar: Fran puede estar
-en la Plazuela y Primo en el Parque al mismo tiempo.
+### 5. Cuando uno se queda sin botellas
 
-### 5. Mayoreo
+Botón **Pasar botellas**, abajo. Se elige quién las pasa y cuántas. **Mitad y mitad** precarga las que
+dejarían a los dos parejos, y el número se puede editar antes de confirmar: el que cuenta es quien las
+trae en la mano, no la app.
+
+Esto **no es una venta ni una carga**: las botellas solo cambian de hielera. El total que salió de casa
+no se mueve, y el dinero del día tampoco. Sirve para que el que se queda sin nada siga vendiendo sin que
+su hielera se vaya a números rojos y la del otro quede con piezas fantasma.
+
+### 6. Mayoreo
 
 Botón **Mayoreo**, abajo. Ahí sí se elige el punto a mano y se pone la cantidad. Registra solo piezas; el
 precio ($14) lo aplica el **Corte** al cerrar el día. Salen de la misma hielera, así que también la descuentan.
 
-### 6. Al cerrar: revisar
+### 7. Al cerrar: revisar
 
 En **Hoy** se ve el día de cada vendedor: lo que le queda en la hielera, cuánto vendió, su ritmo por hora,
 su mejor lugar y su mejor hora, y **la lista de turnos** — cada lugar con su franja (`17:03–18:10`), sus
 piezas y su ritmo. Es la lectura de "¿qué tal estuvo la Plazuela hoy de 5 a 6?".
 
-Abajo, el **Cuadre del día** verifica que `cargadas = vendidas + restantes`. Si marca `!` en rojo, falta
-registrar una carga.
+Abajo, el **Cuadre del día** verifica que `cargadas + recibidas = vendidas + pasadas + restantes`, y dice
+cuántas piezas salieron de casa — el número que se cuenta contra lo que se llevó. Si marca `!` en rojo,
+alguien vendió más piezas de las que tuvo en las manos: falta registrar una carga, o el traspaso quedó
+mal contado.
 
 Para comparar días o buscar la mejor hora de cada lugar, ir a **Stats** → la cuadrícula **Lugar × hora**.
 
-### 7. Al cerrar: el corte de caja
+### 8. Al cerrar: el corte de caja
 
 En **Corte**, el ingreso del día ya viene sumado de las ventas (calle × $20, mayoreo × $14), desglosado por
 canal para validarlo de un vistazo contra el efectivo real. Se capturan los gastos línea por línea
@@ -75,9 +87,10 @@ Luego, el respaldo entre los dos teléfonos: ver **Ritual diario** más abajo.
 
 ### Si te equivocas
 
-- **Un toque de más:** el botón **`−1`** anula la última venta de ese lugar. No pregunta nada; si también
-  le picas de más, un `+1` lo arregla. Ojo: se lleva **la venta completa**, así que un `−1` sobre un `+3`
-  quita las tres piezas y hay que volver a capturarlas.
+- **Un toque de más:** el botón **`−1`** anula la última venta **del vendedor seleccionado** en ese lugar.
+  No pregunta nada; si también le picas de más, un `+1` lo arregla. Ojo: se lleva **la venta completa**,
+  así que un `−1` sobre un `+3` quita las tres piezas y hay que volver a capturarlas. Si el `−1` está
+  apagado es que ese vendedor no tiene ventas de calle en este lugar hoy — revisa el selector de arriba.
 - **Marcaste el lugar equivocado:** vas a **Hoy** → Movimientos, buscas la línea con la etiqueta `LUGAR` y
   tocas **Anular**. Luego marcas el correcto.
 - **Cualquier otra cosa** (una carga mal puesta, una venta vieja): en **Hoy** → Movimientos, **Anular** en
@@ -114,18 +127,23 @@ ni los demás headers.
 Requiere HTTPS para que el service worker se registre — Netlify lo da por defecto.
 Para instalarla en el teléfono: abrir la URL → menú del navegador → "Agregar a pantalla de inicio".
 
-## Ritual diario (dos teléfonos)
+## Ritual diario: exportar
 
-Cada teléfono guarda sus propios eventos en `localStorage`. No hay sync automático: la consolidación es manual
-y **no puede duplicar nada** (el merge es idempotente por `id`).
+**El registro es de un solo teléfono.** Como salen juntos al mismo punto, todo se captura ahí: los dos
+vendedores, los dos turnos y los traspasos entre sus hieleras.
 
-Al cierre del día:
+Eso quita el paso de consolidar cada noche, pero **hace el respaldo obligatorio**: ese teléfono es el
+único lugar donde existe el día. Antes, el intercambio entre los dos teléfonos servía de copia sin que
+nadie lo pensara; ahora ya no hay segunda copia. Al cierre del día, **Ajustes → Exportar JSON** y guardar
+el archivo fuera del teléfono (WhatsApp a uno mismo, correo, lo que sea).
 
-1. En el teléfono **B**: Ajustes → **Exportar JSON**. Manda el archivo al teléfono **A** (WhatsApp, AirDrop, correo).
+Si algún día se vuelve a capturar en dos teléfonos, la consolidación sigue ahí y **no puede duplicar
+nada** (el merge es idempotente por `id`):
+
+1. En el teléfono **B**: Ajustes → **Exportar JSON**. Manda el archivo al teléfono **A**.
 2. En el teléfono **A**: Ajustes → seleccionar el archivo en el input de importar. Aparece
    `Nuevos N · repetidos M · inválidos K`.
 3. Opcional inverso: exportar desde **A** e importar en **B** para que ambos queden completos.
-4. Teléfono A queda como el histórico bueno. Exporta y guarda ese JSON como respaldo.
 
 Importar el mismo archivo dos veces no hace daño: los eventos ya presentes se ignoran.
 
@@ -135,12 +153,13 @@ portapapeles.
 ## Las cinco pantallas
 
 - **Vender** — el caso común. Arriba, una tarjeta por vendedor con lo que le queda en la hielera; la
-  seleccionada es a quien se le acredita. Debajo, el lugar donde está parado (el turno) y un solo botón
+  seleccionada es a quien se le acredita. Debajo, el lugar donde están parados (el turno) y un solo botón
   grande `+1 · Fran`: ya no hay que elegir punto al vender, porque el lugar ya está declarado. También
-  se carga la hielera desde aquí.
+  se carga la hielera y se pasan botellas de una a otra desde aquí.
 - **Hoy** — el tablero del día por vendedor: en hielera, vendió, ritmo por hora, mejor lugar y mejor hora,
   la lista de turnos con su franja y su ritmo, más las barras por lugar y por hora de esa persona. Abajo,
-  el registro de movimientos (ventas, cargas y lugares) con su botón de anular, y la captura retroactiva.
+  el registro de movimientos (ventas, cargas, lugares y traspasos) con su botón de anular, y la captura
+  retroactiva.
 - **Corte** — el cierre del día en dinero: ingreso calculado de las ventas, gastos capturados a mano,
   utilidad y reparto 50/50. Cerrar el corte lo vuelve un registro inmutable.
 - **Stats** — historia: rango (hoy / 7 días / todo), vendedor (ambos / Fran / Primo) y canal. Arriba de
@@ -153,13 +172,17 @@ Se vende como una hora aproximada por lugar, así que la app trabaja con esa uni
 el vendedor marca dónde está: eso registra un evento `shift`, que **no cuenta ninguna pieza**, solo dice
 "a las 17:03 Fran se paró en la Plazuela". Desde ahí, cada `+1` se acredita a ese lugar con su hora real.
 
+- **Marcar lugar abre el turno de los dos.** Salen juntos al mismo punto y el registro es de un solo
+  teléfono, así que pedir el lugar una vez por vendedor solo serviría para que se olvide el segundo y
+  las ventas de ese quedaran fuera de turno. Al que ya estaba en ese punto no se le escribe nada.
 - **El turno se cierra solo.** No hay botón de "terminar": el turno acaba cuando ese mismo vendedor marca
   el siguiente lugar. Cambiar de lugar es un toque, y ahí queda partido el día.
 - El turno abierto de hoy corre **hasta ahora**. El de un día pasado se cierra en su última venta: medirlo
   contra el reloj de hoy inventaría horas que nadie estuvo parado ahí.
 - Una venta le toca a un turno si coinciden **vendedor, lugar y ventana horaria**. No se guarda el turno
   dentro de la venta, así que las retroactivas y lo capturado antes de esta versión también entran solas.
-- Cada vendedor tiene su propio turno: Fran puede estar en la Plazuela y Primo en el Parque a la vez.
+- El modelo guarda **un turno por vendedor**, aunque hoy la pantalla los mueva juntos: si algún día se
+  separan, el histórico ya lo soporta sin migrar nada y sin que un turno pise al otro.
 - Si se vendió sin marcar lugar, esas piezas siguen contando en todos lados, y la vista Hoy avisa cuántas
   **quedaron fuera de turno**. No se pierde nada; solo no se le puede atribuir un rato concreto.
 - Un lugar mal marcado se corrige anulándolo, como todo lo demás. Volver a marcar el lugar en el que ya
@@ -168,14 +191,31 @@ el vendedor marca dónde está: eso registra un evento `shift`, que **no cuenta 
 ## La hielera
 
 Cada mañana se registra cuántas piezas salen en la hielera de cada vendedor (evento `load`). Las recargas
-del día **suman**. Lo que se muestra es `cargado hoy − vendido hoy`, y descuenta calle *y* mayoreo: ambas
-sacan botellas físicas de la misma hielera.
+del día **suman**. Lo que se muestra es `cargado + recibido − pasado − vendido`, y descuenta calle *y*
+mayoreo: ambas sacan botellas físicas de la misma hielera.
 
 - **No arrastra saldo entre días.** Cada jornada empieza con lo que se cargue ese día. Lo que sobra se
   regresa; si mañana sale de nuevo, se vuelve a cargar.
-- Sin carga registrada la app muestra `—`, no `0`: un cero inventado se lee como "no le queda nada".
-- Si vende más de lo cargado, la vista Hoy lo dice en rojo — falta registrar una carga, no es un error del
-  conteo de ventas.
+- Sin carga ni traspaso recibido la app muestra `—`, no `0`: un cero inventado se lee como "no le queda
+  nada". Recibir botellas del otro sí cuenta — quien las recibió tiene botellas, aunque no haya cargado.
+- Si vende más de las que tuvo en las manos, la vista Hoy lo dice en rojo. No es un error del conteo de
+  ventas: falta registrar una carga, o (si hubo traspaso ese día) las piezas que se pasaron quedaron mal
+  contadas.
+
+### Los traspasos
+
+Cuando uno se acaba su carga y el otro le pasa de las suyas para terminar juntos, eso se registra como un
+evento `transfer`: **la venta es de quien la hace, pero la botella es de quien la cargó**.
+
+- **No modifica las cargas.** Sumar la pieza a una carga y restarla de la otra dejaría los dos números
+  cuadrados, pero borraría para siempre de quién era la botella que vendió el otro — y ese es justo el
+  dato que hace falta el día que el reparto deje de ser mitad y mitad.
+- **No mueve el total del día.** Los traspasos se cancelan entre las dos hieleras, así que `cargadas`
+  sigue siendo lo que de verdad salió de casa y se puede contar contra lo que se llevó.
+- **No toca el dinero.** El corte lee ventas, no hieleras: el ingreso es el mismo se hayan pasado
+  botellas o no.
+- Va en los dos sentidos y puede haber varios el mismo día.
+- Se anula como todo lo demás, y las piezas regresan a la hielera de donde salieron.
 - El **ritmo por hora** es piezas ÷ el tramo entre la primera y la última venta, con piso de una hora para
   que tres ventas en diez minutos no se reporten como "18 por hora". Junto al número siempre va el tramo
   (`4/h · en 5h`) para que se pueda juzgar.
@@ -226,15 +266,19 @@ tocó cada día.
 ## Reglas del modelo de datos
 
 - **El histórico es inmutable.** Nada se edita ni se borra. Un error se corrige con un evento `void` que
-  referencia la venta, la carga o el turno; todas quedan registradas y la vista Hoy las muestra tachadas.
-  Por eso un `shift` solo guarda su inicio: su cierre se deduce del siguiente, nunca se escribe encima.
-- Una venta, una carga o un turno se anulan **una sola vez**. Para corregir una carga mal capturada se
-  anula y se registra la correcta.
+  referencia la venta, la carga, el turno o el traspaso; todas quedan registradas y la vista Hoy las
+  muestra tachadas. Por eso un `shift` solo guarda su inicio: su cierre se deduce del siguiente, nunca se
+  escribe encima.
+- Una venta, una carga, un turno o un traspaso se anulan **una sola vez**. Para corregir una carga mal
+  capturada se anula y se registra la correcta.
 - El botón **-1** de la pantalla Vender no borra ni resta: anula **entera** la última venta activa de calle
-  de ese punto. Si esa venta traía tres piezas (un `+3`), se van las tres y hay que volver a capturar —
-  editarla para dejarla en dos sería escribir sobre el histórico. Se deshabilita cuando el punto va en cero
-  y no pide confirmación: es la corrección de un toque de más, y si también se toca por error basta con
-  un `+1`.
+  **de ese vendedor** en ese punto. Si esa venta traía tres piezas (un `+3`), se van las tres y hay que
+  volver a capturar — editarla para dejarla en dos sería escribir sobre el histórico. Se deshabilita
+  cuando ese vendedor va en cero ahí y no pide confirmación: es la corrección de un toque de más, y si
+  también se toca por error basta con un `+1`.
+- **El `-1` filtra por vendedor a propósito.** Los dos venden desde el mismo teléfono y en el mismo lugar:
+  sin ese filtro, corregir un toque de más de uno le quitaría una pieza al otro, y no lo avisaría nadie
+  — el total del día y el dinero salen idénticos, solo cambia a quién se le acreditó.
 - Quitar un punto en Ajustes solo lo saca de la lista activa: sus ventas históricas siguen contando en Stats.
 - El arreglo de eventos es *append-only*; ninguna función lo muta ni lo reordena en sitio.
 
@@ -261,3 +305,8 @@ No lleva saldos de clientes, no tiene sync en tiempo real ni cuentas de usuario.
 la hielera del día: no hay almacén, ni costo, ni merma. El corte de caja calcula el dinero del día a partir
 de las piezas registradas y un precio por canal; lo que queda fuera está listado en **Fuera de alcance del
 corte**.
+
+Los traspasos son **solo inventario**: hoy no tocan el dinero, porque el reparto es mitad y mitad y el
+ingreso es común, así que da igual de qué hielera salió cada botella. El evento guarda `from`, `to`, `qty`
+y la hora justamente para que el día que el reparto deje de ser 50/50 el dato ya esté escrito hacia atrás
+y no haya que reconstruirlo.
