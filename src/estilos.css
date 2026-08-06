@@ -285,6 +285,83 @@ label .detalle {
   }
 }
 
+/* ---------- vender: turno (donde esta parado el vendedor) ---------- */
+
+.turno {
+  padding: 14px 0 16px;
+  border-bottom: 1px solid var(--linea);
+  margin-bottom: 20px;
+}
+
+.turno-cabeza {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.turno-lugar {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.15;
+}
+
+.turno-pie {
+  margin: 6px 0 0;
+}
+
+.turno-vacio h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.lugares {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.btn-lugar {
+  min-height: 56px;
+  padding: 0 16px;
+  border: 1px solid var(--linea);
+  border-radius: 2px;
+  background: var(--fondo);
+  color: var(--texto);
+  font-size: 18px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.btn-lugar.activo {
+  border-color: var(--acento);
+  color: var(--acento);
+}
+
+/* Cada rato parado en un lugar, en una linea legible de corrido. */
+.turno-fila {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--linea);
+}
+
+.turno-fila:last-child {
+  border-bottom: none;
+}
+
+.turno-fila-lugar {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.turno-fila-cifra {
+  font-weight: 600;
+}
+
 /* ---------- vender: bloques de punto ---------- */
 
 .punto {
@@ -462,6 +539,68 @@ label .detalle {
   margin-top: 16px;
 }
 
+/* ---------- corte de caja ---------- */
+
+/* Rotulo a la izquierda, dinero a la derecha: la columna de montos se lee en vertical. */
+.corte-linea {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+}
+
+.corte-linea .num {
+  white-space: nowrap;
+}
+
+.corte-total {
+  border-top: 1px solid var(--linea);
+  margin-top: 4px;
+  font-weight: 600;
+}
+
+/* Lo unico que Fran necesita leer al final del dia: cuanto le toca a cada quien. */
+.corte-reparto {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.corte-socio {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 10px;
+  border: 1px solid var(--linea);
+  border-radius: 2px;
+  min-width: 0;
+}
+
+.corte-cifra {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.corte-sello {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.corte-precios {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.corte-precios label {
+  margin-bottom: 8px;
+}
+
 /* ---------- listas ---------- */
 
 .fila {
@@ -533,6 +672,61 @@ label .detalle {
 .barra-valor {
   font-size: 13px;
   text-align: right;
+}
+
+/* ---------- cruce lugar x hora ---------- */
+
+/* La tabla puede tener mas horas que ancho de pantalla: rueda ella sola, la pagina no. */
+.matriz-marco {
+  overflow-x: auto;
+  margin-top: 8px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.matriz {
+  display: grid;
+  gap: 2px;
+  min-width: min-content;
+}
+
+.matriz-cabeza,
+.matriz-esquina {
+  font-size: 12px;
+  color: var(--secundario);
+  text-align: center;
+  padding-bottom: 2px;
+}
+
+.matriz-lugar {
+  font-size: 13px;
+  padding-right: 8px;
+  align-self: center;
+  overflow-wrap: anywhere;
+}
+
+.matriz-celda {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  /* El acento pinta el fondo segun que tan fuerte fue esa hora en ese lugar. */
+  background: color-mix(in srgb, var(--acento) calc(var(--intensidad, 0) * 100%), transparent);
+}
+
+.matriz-celda.vacia {
+  color: var(--linea);
+  font-weight: 400;
+}
+
+.matriz-total {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 /* ---------- navegacion ---------- */

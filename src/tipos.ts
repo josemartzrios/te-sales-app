@@ -31,7 +31,21 @@ export type LoadEvent = {
   device: string;
 };
 
-export type AppEvent = SaleEvent | VoidEvent | LoadEvent;
+/**
+ * Llegada de un vendedor a un lugar: "a las 17:03 Fran se paro en la Plazuela".
+ * Solo marca el inicio. El turno se cierra solo cuando empieza el siguiente de ese vendedor,
+ * porque el historico es inmutable: nada se edita despues de escrito.
+ */
+export type ShiftEvent = {
+  id: string;
+  type: 'shift';
+  ts: string;
+  point: string;
+  vendor: Vendedor;
+  device: string;
+};
+
+export type AppEvent = SaleEvent | VoidEvent | LoadEvent | ShiftEvent;
 
 export type Settings = {
   points: string[];

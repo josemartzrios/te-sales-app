@@ -1,5 +1,24 @@
-import type { AppEvent, Canal, LoadEvent, SaleEvent, Settings, Vendedor } from './tipos';
-import type { Barra, Hielera, PanelVendedor, Rango } from './dominio';
+import type {
+  AppEvent,
+  Canal,
+  LoadEvent,
+  SaleEvent,
+  Settings,
+  ShiftEvent,
+  Vendedor,
+} from './tipos';
+import type { Barra, Hielera, Matriz, PanelVendedor, Rango, Turno } from './dominio';
+import type { Borrador, CorteCerrado, Ingreso, LineaGasto, Precios, Reparto } from './corte';
+import {
+  FONDO_CAJA,
+  FONDO_CAMBIO,
+  FONDO_GASTO,
+  calcularReparto,
+  centavosDesde,
+  efectivoEsperado,
+  importe,
+  pesos,
+} from './corte';
 import {
   HIELERA_BAJA,
   HIELERA_CRITICA,
@@ -14,14 +33,18 @@ import {
   idsAnulados,
   filtrarCanal,
   filtrarRango,
+  jornada,
   ordenarPorHora,
   panelesDelDia,
   porDia,
   porHora,
+  porLugarYHora,
   porPunto,
   porVendedor,
   totalDelDia,
   totalPiezas,
+  turnoActual,
+  turnosDeFecha,
   ultimaVentaActiva,
   ventasActivas,
   ventasDeFecha,
@@ -137,11 +160,12 @@ function entrada(tipo: string, valor: string, attrs: Record<string, string> = {}
 
 // ---------- navegacion ----------
 
-export type Vista = 'vender' | 'hoy' | 'stats' | 'ajustes';
+export type Vista = 'vender' | 'hoy' | 'corte' | 'stats' | 'ajustes';
 
 const SECCIONES: readonly { valor: Vista; etiqueta: string }[] = [
   { valor: 'vender', etiqueta: 'Vender' },
   { valor: 'hoy', etiqueta: 'Hoy' },
+  { valor: 'corte', etiqueta: 'Corte' },
   { valor: 'stats', etiqueta: 'Stats' },
   { valor: 'ajustes', etiqueta: 'Ajustes' },
 ];
@@ -162,9 +186,11 @@ export type PropsVender = {
   ajustes: Settings;
   vendedor: Vendedor;
   hoy: string;
+  ahora: Date;
   alCambiarVendedor: (v: Vendedor) => void;
   alVender: (punto: string, qty: number) => void;
   alRestar: (punto: string) => void;
+  alMarcarLugar: (punto: string) => void;
   alAbrirMayoreo: () => void;
   alAbrirCarga: (v: Vendedor) => void;
 };
@@ -225,14 +251,50 @@ function barraEstado(p: PropsVender): HTMLElement {
   ]);
 }
 
-/** El corazon de la pantalla: nombre, contador y botones. Solo los botones registran. */
-function bloquePunto(p: PropsVender, punto: string): HTMLElement {
-  const calle = totalDelDia(p.eventos, p.hoy, punto, 'calle');
+/**
+ * Sin lugar marcado no hay a que acreditar la venta, asi que la pantalla no ofrece el boton
+ * grande todavia: primero se dice donde se esta parado. Un toque, y ya se puede vender.
+ */
+function tarjetaSinLugar(p: PropsVender): HTMLElement {
+  return el('section', { clase: 'turno turno-vacio' }, [
+    el('h2', { texto: '¿Dónde estás?' }),
+    el('p', {
+      clase: 'detalle',
+      texto: `Marca el lugar y todo lo que venda ${p.vendedor} se acredita ahí.`,
+    }),
+    el(
+      'div',
+      { clase: 'lugares' },
+      p.ajustes.points.map((punto) => boton(punto, 'btn-lugar', () => p.alMarcarLugar(punto)))
+    ),
+  ]);
+}
+
+/** Donde esta parado el vendedor y desde que hora: el encabezado del turno en curso. */
+function tarjetaTurno(p: PropsVender, turno: Turno): HTMLElement {
+  const pie = [`desde ${horaMinuto(turno.inicio)}`, duracionLegible(turno.minutos)];
+  if (turno.piezas > 0) pie.push(`${turno.piezas} piezas`);
+
+  return el('section', { clase: 'turno' }, [
+    el('div', { clase: 'turno-cabeza' }, [
+      el('div', {}, [
+        el('span', { clase: 'detalle', texto: 'Aquí' }),
+        el('h2', { clase: 'turno-lugar', texto: turno.punto }),
+      ]),
+      boton('Cambiar', 'btn-texto', () =>
+        abrirLugar(p.ajustes.points, turno.punto, p.alMarcarLugar)
+      ),
+    ]),
+    el('p', { clase: 'detalle num turno-pie', texto: pie.join(' · ') }),
+  ]);
+}
+
+/** Los botones que registran. Todos van al lugar del turno: nadie elige punto al vender. */
+function bloqueVenta(p: PropsVender, punto: string): HTMLElement {
   const mayoreo = totalDelDia(p.eventos, p.hoy, punto, 'mayoreo');
 
-  // Sin texto del vendedor adentro: ya esta en la barra, y el pulgar tapa medio boton.
-  const botonPrincipal = boton('+1', 'btn-venta', () => p.alVender(punto, 1));
-  botonPrincipal.setAttribute('aria-label', `Registrar una venta en ${punto}`);
+  const botonPrincipal = boton(`+1 · ${p.vendedor}`, 'btn-venta', () => p.alVender(punto, 1));
+  botonPrincipal.setAttribute('aria-label', `Registrar una venta de ${p.vendedor} en ${punto}`);
 
   const hayQueAnular = ultimaVentaActiva(p.eventos, punto, p.hoy) !== null;
   const botonRestar = boton('−1', 'btn-chico peligro', () => p.alRestar(punto));
@@ -240,30 +302,88 @@ function bloquePunto(p: PropsVender, punto: string): HTMLElement {
   botonRestar.setAttribute('aria-label', `Anular la última venta en ${punto}`);
 
   return el('section', { clase: 'punto' }, [
-    el('div', { clase: 'punto-nombre' }, [
-      el('h2', { texto: punto }),
-      el('span', { clase: 'conteo num', texto: String(calle) }),
-    ]),
-    mayoreo > 0 ? el('p', { clase: 'detalle num punto-pie', texto: `mayoreo hoy ${mayoreo}` }) : null,
     botonPrincipal,
     el('div', { clase: 'fila-chica' }, [
       boton('+2', 'btn-chico acento', () => p.alVender(punto, 2)),
       boton('+3', 'btn-chico acento', () => p.alVender(punto, 3)),
       botonRestar,
     ]),
+    mayoreo > 0 ? el('p', { clase: 'detalle num punto-pie', texto: `mayoreo hoy ${mayoreo}` }) : null,
   ]);
 }
 
+/** Lo del dia por lugar, solo para mirar: registrar es arriba, en el lugar del turno. */
+function resumenDeHoy(p: PropsVender): HTMLElement | null {
+  const calle = ventasActivas(p.eventos).filter(
+    (v) => claveFecha(v.ts) === p.hoy && v.channel === 'calle'
+  );
+  if (calle.length === 0) return null;
+  return bloqueBarras('Calle hoy por lugar', porPunto(calle, p.ajustes.points), true);
+}
+
 export function vistaVender(p: PropsVender): HTMLElement {
+  const marcado = turnoActual(p.eventos, p.vendedor, p.hoy);
+  const turno =
+    marcado === null
+      ? null
+      : jornada(p.eventos, p.hoy, p.ahora).turnos.find((t) => t.id === marcado.id) ?? null;
+
   return el('div', { clase: 'pantalla-vender' }, [
     el('h1', { clase: 'solo-lectores', texto: 'Vender' }),
     barraEstado(p),
-    el('div', { clase: 'puntos' }, p.ajustes.points.map((punto) => bloquePunto(p, punto))),
+    turno === null ? tarjetaSinLugar(p) : tarjetaTurno(p, turno),
+    turno === null ? null : bloqueVenta(p, turno.punto),
+    resumenDeHoy(p),
     el('div', { clase: 'acciones-secundarias' }, [
       boton('Cargar hielera', 'btn-texto', () => p.alAbrirCarga(p.vendedor)),
       boton('Mayoreo', 'btn-texto', p.alAbrirMayoreo),
     ]),
   ]);
+}
+
+/** Cambiar de lugar es marcar uno nuevo: el turno anterior se cierra solo a esa hora. */
+function abrirLugar(
+  puntos: readonly string[],
+  actual: string | null,
+  alConfirmar: (punto: string) => void
+): void {
+  const modal = el('dialog', { attrs: { 'aria-label': 'Cambiar de lugar' } });
+
+  if (typeof modal.showModal !== 'function') {
+    const respuesta = window.prompt(`Lugar (${puntos.join(', ')}):`, actual ?? puntos[0] ?? '');
+    if (respuesta !== null && puntos.includes(respuesta)) alConfirmar(respuesta);
+    return;
+  }
+
+  const cerrar = (): void => {
+    modal.close();
+    modal.remove();
+  };
+
+  modal.appendChild(
+    el('div', {}, [
+      el('h2', { texto: 'Cambiar de lugar' }),
+      el('p', {
+        clase: 'detalle',
+        texto: 'Desde este momento las ventas se acreditan al lugar nuevo.',
+      }),
+      el(
+        'div',
+        { clase: 'lugares' },
+        puntos.map((punto) =>
+          boton(punto, `btn-lugar${punto === actual ? ' activo' : ''}`, () => {
+            cerrar();
+            alConfirmar(punto);
+          })
+        )
+      ),
+      el('div', { clase: 'fila-botones' }, [boton('Cancelar', 'btn', cerrar)]),
+    ])
+  );
+
+  document.body.appendChild(modal);
+  modal.addEventListener('cancel', () => modal.remove());
+  modal.showModal();
 }
 
 /** Tamanos tipicos de lote: casi siempre la carga es una de estas dos. */
@@ -366,7 +486,7 @@ export function abrirMayoreo(
   modal.appendChild(
     el('div', {}, [
       el('h2', { texto: 'Mayoreo' }),
-      el('p', { clase: 'detalle', texto: 'Solo cantidad; el precio se resuelve fuera de esta app.' }),
+      el('p', { clase: 'detalle', texto: 'Solo cantidad; el precio lo aplica el Corte al cerrar el dia.' }),
       campo('Punto', punto),
       campo('Cantidad', cantidad),
       el('div', { clase: 'fila-botones' }, [
@@ -395,6 +515,7 @@ export type PropsHoy = {
   eventos: readonly AppEvent[];
   ajustes: Settings;
   fecha: string;
+  ahora: Date;
   alCambiarFecha: (f: string) => void;
   alAnular: (id: string) => void;
   alAbrirRetro: () => void;
@@ -456,6 +577,27 @@ function insignias(v: SaleEvent): HTMLElement[] {
   return marcas;
 }
 
+/** Cada rato parado en un lugar, con lo que rindio. La lectura de "una hora aprox por lugar". */
+function bloqueTurnos(turnos: readonly Turno[]): HTMLElement {
+  return el('section', { clase: 'bloque-barras' }, [
+    el('h3', { texto: 'Turnos' }),
+    ...turnos.map((t) =>
+      el('div', { clase: 'turno-fila' }, [
+        el('span', { clase: 'turno-fila-lugar', texto: t.punto }),
+        el('span', { clase: 'detalle num', texto: t.franja }),
+        el('span', {
+          clase: 'num turno-fila-cifra',
+          texto: t.piezas === 0 ? '—' : String(t.piezas),
+        }),
+        el('span', {
+          clase: 'detalle num',
+          texto: t.piezas === 0 ? 'sin ventas' : `${t.porHora}/h`,
+        }),
+      ])
+    ),
+  ]);
+}
+
 /** Una cifra grande con su rotulo: el tablero se lee de un vistazo, sin interpretar barras. */
 function metrica(rotulo: string, valor: string, pie: string, clase = ''): HTMLElement {
   return el('div', { clase: `metrica${clase === '' ? '' : ` ${clase}`}` }, [
@@ -465,7 +607,7 @@ function metrica(rotulo: string, valor: string, pie: string, clase = ''): HTMLEl
   ]);
 }
 
-function panelDelVendedor(panel: PanelVendedor): HTMLElement {
+function panelDelVendedor(panel: PanelVendedor, turnos: readonly Turno[]): HTMLElement {
   const { hielera: h, ritmo: r } = panel;
   const vendioAlgo = h.vendido > 0;
 
@@ -510,46 +652,65 @@ function panelDelVendedor(panel: PanelVendedor): HTMLElement {
         })
       : null,
     lugar,
+    turnos.length === 0 ? null : bloqueTurnos(turnos),
     vendioAlgo ? bloqueBarras('Por lugar', panel.porPunto, true) : null,
     vendioAlgo ? bloqueBarras('Por hora', panel.porHora, true) : null,
   ]);
 }
 
+function filaMovimiento(m: SaleEvent | LoadEvent | ShiftEvent): (HTMLElement | null)[] {
+  const hora = el('span', { clase: 'num', texto: horaMinuto(m.ts) });
+  if (m.type === 'load') {
+    return [
+      hora,
+      el('span', { clase: 'insignia', texto: 'CARGA' }),
+      el('span', { clase: 'detalle', texto: m.vendor }),
+      el('span', { clase: 'num', texto: `×${m.qty}` }),
+    ];
+  }
+  if (m.type === 'shift') {
+    return [
+      hora,
+      el('span', { clase: 'insignia', texto: 'LUGAR' }),
+      el('span', { texto: m.point }),
+      el('span', { clase: 'detalle', texto: m.vendor }),
+    ];
+  }
+  return [
+    hora,
+    el('span', { texto: m.point }),
+    el('span', { clase: 'detalle', texto: m.vendor }),
+    el('span', { clase: 'num', texto: `×${m.qty}` }),
+    ...insignias(m),
+  ];
+}
+
 export function vistaHoy(p: PropsHoy): HTMLElement {
   const ventas = ventasDeFecha(p.eventos, p.fecha);
   const cargas = cargasDeFecha(p.eventos, p.fecha);
+  const turnos = turnosDeFecha(p.eventos, p.fecha);
   const anulados = idsAnulados(p.eventos);
   const activas = ventas.filter((v) => !anulados.has(v.id));
   const paneles = panelesDelDia(p.eventos, p.fecha, p.ajustes.points);
+  const { turnos: cerrados, sinTurno } = jornada(p.eventos, p.fecha, p.ahora);
 
   const selectorFecha = entrada('date', p.fecha);
   selectorFecha.addEventListener('change', () => {
     if (selectorFecha.value !== '') p.alCambiarFecha(selectorFecha.value);
   });
 
-  const movimientos = ordenarPorHora<SaleEvent | LoadEvent>([...ventas, ...cargas]);
+  const movimientos = ordenarPorHora<SaleEvent | LoadEvent | ShiftEvent>([
+    ...ventas,
+    ...cargas,
+    ...turnos,
+  ]);
   const filas =
     movimientos.length === 0
       ? [el('p', { clase: 'vacio', texto: 'Sin registros en esta fecha.' })]
       : movimientos.map((m) => {
           const anulada = anulados.has(m.id);
-          const datos =
-            m.type === 'load'
-              ? [
-                  el('span', { clase: 'num', texto: horaMinuto(m.ts) }),
-                  el('span', { clase: 'insignia', texto: 'CARGA' }),
-                  el('span', { clase: 'detalle', texto: m.vendor }),
-                  el('span', { clase: 'num', texto: `×${m.qty}` }),
-                ]
-              : [
-                  el('span', { clase: 'num', texto: horaMinuto(m.ts) }),
-                  el('span', { texto: m.point }),
-                  el('span', { clase: 'detalle', texto: m.vendor }),
-                  el('span', { clase: 'num', texto: `×${m.qty}` }),
-                  ...insignias(m),
-                ];
           return el('div', { clase: `fila${anulada ? ' anulada' : ''}` }, [
-            el('div', { clase: 'fila-datos' }, datos),
+            el('div', { clase: 'fila-datos' }, filaMovimiento(m)),
             anulada
               ? el('span', { clase: 'detalle', texto: 'anulada' })
               : boton('Anular', 'btn peligro', () => p.alAnular(m.id)),
@@ -559,7 +720,18 @@ export function vistaHoy(p: PropsHoy): HTMLElement {
   return el('div', {}, [
     encabezado('Hoy', `${fechaLegible(p.fecha)} · ${totalPiezas(activas)} piezas`),
     campo('Fecha', selectorFecha),
-    ...paneles.map(panelDelVendedor),
+    ...paneles.map((panel) =>
+      panelDelVendedor(
+        panel,
+        cerrados.filter((t) => t.vendedor === panel.vendedor)
+      )
+    ),
+    sinTurno === 0
+      ? null
+      : el('p', {
+          clase: 'aviso',
+          texto: `${sinTurno} piezas quedaron fuera de turno: se vendieron sin marcar lugar.`,
+        }),
     el('div', { clase: 'separador' }),
     el('section', { clase: 'bloque' }, [
       el('h2', { texto: 'Movimientos' }),
@@ -586,6 +758,52 @@ export type PropsStats = {
   alCambiarCanal: (c: Canal | 'todo') => void;
   alCambiarVendedor: (v: Vendedor | 'todos') => void;
 };
+
+/**
+ * Lugar x hora en una cuadricula: la pregunta real del negocio, "donde y a que hora se vende".
+ * La intensidad del fondo va contra el maximo de la tabla; el numero siempre esta escrito,
+ * para que no haya que interpretar el color.
+ */
+function bloqueMatriz(titulo: string, m: Matriz): HTMLElement {
+  if (m.filas.length === 0) {
+    return el('section', { clase: 'bloque' }, [
+      el('h2', { texto: titulo }),
+      el('p', { clase: 'vacio', texto: 'Sin ventas en este rango.' }),
+    ]);
+  }
+
+  const columnas = `minmax(6rem, 1fr) repeat(${m.horas.length}, 2.4rem) 2.8rem`;
+  const rejilla = el('div', { clase: 'matriz' });
+  rejilla.style.gridTemplateColumns = columnas;
+
+  rejilla.appendChild(el('span', { clase: 'matriz-esquina' }));
+  for (const h of m.horas) {
+    rejilla.appendChild(el('span', { clase: 'matriz-cabeza num', texto: String(h) }));
+  }
+  rejilla.appendChild(el('span', { clase: 'matriz-cabeza num', texto: 'Tot' }));
+
+  for (const fila of m.filas) {
+    rejilla.appendChild(el('span', { clase: 'matriz-lugar', texto: fila.punto }));
+    for (const celda of fila.celdas) {
+      const nodo = el('span', {
+        clase: `matriz-celda num${celda.valor === 0 ? ' vacia' : ''}`,
+        texto: celda.valor === 0 ? '·' : String(celda.valor),
+        attrs: { title: `${fila.punto} · ${celda.hora}:00 · ${celda.valor}` },
+      });
+      if (celda.valor > 0 && m.maximo > 0) {
+        nodo.style.setProperty('--intensidad', String(celda.valor / m.maximo));
+      }
+      rejilla.appendChild(nodo);
+    }
+    rejilla.appendChild(el('span', { clase: 'matriz-total num', texto: String(fila.total) }));
+  }
+
+  return el('section', { clase: 'bloque' }, [
+    el('h2', { texto: titulo }),
+    el('p', { clase: 'detalle', texto: 'Columnas: hora del día. Filas: lugar.' }),
+    el('div', { clase: 'matriz-marco' }, [rejilla]),
+  ]);
+}
 
 export function vistaStats(p: PropsStats): HTMLElement {
   const enRango = filtrarCanal(filtrarRango(ventasActivas(p.eventos), p.rango, p.ahora), p.canal);
@@ -621,6 +839,7 @@ export function vistaStats(p: PropsStats): HTMLElement {
       p.alCambiarCanal
     ),
     el('div', { clase: 'separador' }),
+    bloqueMatriz('Lugar × hora', porLugarYHora(ventas)),
     bloqueBarras('Por hora', porHora(ventas)),
     bloqueBarras('Por lugar', porPunto(ventas, p.ajustes.points)),
     soloUno ? null : bloqueBarras('Por vendedor', porVendedor(ventas)),
@@ -760,6 +979,240 @@ export function abrirCargaRetro(
   document.body.appendChild(modal);
   modal.addEventListener('cancel', () => modal.remove());
   modal.showModal();
+}
+
+// ---------- vista: corte de caja ----------
+
+export type PropsCorte = {
+  fecha: string;
+  /** Calculado del registro de ventas. El corte solo lee: nunca toca un evento. */
+  ingreso: Ingreso;
+  precios: Precios;
+  borrador: Borrador;
+  /** El corte cerrado de esa fecha, si ya existe. Con esto la vista pasa a solo lectura. */
+  cerrado: CorteCerrado | null;
+  alCambiarFecha: (f: string) => void;
+  alAgregarGasto: (concepto: string, monto: string) => void;
+  alQuitarGasto: (id: string) => void;
+  alCambiarReponer: (monto: string) => void;
+  alCambiarPrecios: (calle: string, mayoreo: string) => void;
+  alCerrar: (reponer: string) => void;
+  alCopiar: () => void;
+};
+
+const ID_CONCEPTO = 'corte-concepto';
+
+/** Devuelve el foco al concepto tras agregar un gasto: se capturan varios seguidos, sin volver a tocar. */
+export function enfocarGasto(): void {
+  document.getElementById(ID_CONCEPTO)?.focus();
+}
+
+function entradaMonto(valor: string, attrs: Record<string, string> = {}): HTMLInputElement {
+  // type=text y no number: en el teclado en español el separador decimal es la coma, y un
+  // input numerico la rechaza en silencio dejando el campo vacio.
+  return entrada('text', valor, {
+    inputmode: 'decimal',
+    maxlength: '12',
+    placeholder: '0.00',
+    ...attrs,
+  });
+}
+
+function lineaDinero(rotulo: string, centavos: number, clase = ''): HTMLElement {
+  return el('div', { clase: `corte-linea${clase === '' ? '' : ` ${clase}`}` }, [
+    el('span', { texto: rotulo }),
+    el('span', { clase: 'num', texto: importe(centavos) }),
+  ]);
+}
+
+function bloqueIngreso(ingreso: Ingreso, precios: Precios): HTMLElement {
+  return el('section', { clase: 'bloque' }, [
+    el('h2', { texto: 'Ingreso' }),
+    el('p', { clase: 'detalle', texto: 'Sumado de las ventas registradas. Valídalo contra el efectivo.' }),
+    lineaDinero(
+      `Calle · ${ingreso.calle.piezas} × ${importe(precios.calle)}`,
+      ingreso.calle.centavos
+    ),
+    lineaDinero(
+      `Mayoreo · ${ingreso.mayoreo.piezas} × ${importe(precios.mayoreo)}`,
+      ingreso.mayoreo.centavos
+    ),
+    lineaDinero('Total', ingreso.total, 'corte-total'),
+  ]);
+}
+
+/** alQuitar null = corte cerrado: se listan igual pero sin manera de tocarlos. */
+function listaGastos(
+  gastos: readonly LineaGasto[],
+  alQuitar: ((id: string) => void) | null
+): HTMLElement[] {
+  if (gastos.length === 0) return [el('p', { clase: 'vacio', texto: 'Sin gastos capturados.' })];
+  return gastos.map((g) =>
+    el('div', { clase: 'fila' }, [
+      el('div', { clase: 'fila-datos' }, [
+        el('span', { texto: g.concepto }),
+        el('span', { clase: 'num', texto: importe(g.centavos) }),
+      ]),
+      alQuitar === null ? null : boton('Borrar', 'btn peligro', () => alQuitar(g.id)),
+    ])
+  );
+}
+
+function contenidoUtilidad(reparto: Reparto, fondo: { gasto: number; cambio: number }): Node[] {
+  const total = fondo.gasto + fondo.cambio;
+  return [
+    el('h2', { texto: 'Utilidad' }),
+    lineaDinero('Ingreso', reparto.ingreso),
+    lineaDinero('Gastos', -reparto.gastos),
+    reparto.reponerCaja === 0 ? null : lineaDinero('Reponer caja', -reparto.reponerCaja),
+    reparto.ajustes === 0 ? null : lineaDinero('Ajustes', reparto.ajustes),
+    lineaDinero('Utilidad', reparto.utilidad, 'corte-total'),
+    el('div', { clase: 'corte-reparto' }, [
+      el('div', { clase: 'corte-socio' }, [
+        el('span', { clase: 'detalle', texto: 'Fran' }),
+        el('span', { clase: 'corte-cifra num', texto: importe(reparto.fran) }),
+      ]),
+      el('div', { clase: 'corte-socio' }, [
+        el('span', { clase: 'detalle', texto: 'Primo' }),
+        el('span', { clase: 'corte-cifra num', texto: importe(reparto.primo) }),
+      ]),
+    ]),
+    el('p', {
+      clase: 'detalle num',
+      texto:
+        `Deja ${importe(total)} en la caja (${pesos(fondo.gasto)} gasto + ` +
+        `${pesos(fondo.cambio)} cambio). Efectivo esperado al cerrar: ` +
+        `${importe(efectivoEsperado(reparto, total))}.`,
+    }),
+  ].filter((n): n is HTMLElement => n !== null);
+}
+
+/** Corte ya cerrado: se pinta desde el snapshot guardado, nunca recalculando contra las ventas de hoy. */
+function corteCerrado(c: CorteCerrado, alCopiar: () => void): HTMLElement {
+  return el('div', {}, [
+    el('div', { clase: 'corte-sello' }, [
+      el('span', { clase: 'insignia', texto: 'CERRADO' }),
+      el('span', { clase: 'detalle', texto: `a las ${horaMinuto(c.cerradoEn)}` }),
+    ]),
+    bloqueIngreso(c.ingreso, c.precios),
+    el('section', { clase: 'bloque' }, [
+      el('h2', { texto: 'Gastos' }),
+      ...listaGastos(c.gastos, null),
+      lineaDinero('Total', c.reparto.gastos, 'corte-total'),
+    ]),
+    el('section', { clase: 'bloque' }, contenidoUtilidad(c.reparto, c.fondo)),
+    boton('Copiar resumen', 'btn bloque-completo', alCopiar),
+    el('p', {
+      clase: 'detalle espaciado',
+      texto:
+        'Un corte cerrado no se edita ni se borra. Si salió mal, se compensa en un corte futuro.',
+    }),
+  ]);
+}
+
+export function vistaCorte(p: PropsCorte): HTMLElement {
+  const selectorFecha = entrada('date', p.fecha);
+  selectorFecha.addEventListener('change', () => {
+    if (selectorFecha.value !== '') p.alCambiarFecha(selectorFecha.value);
+  });
+
+  const cabecera = [
+    encabezado('Corte', fechaLegible(p.fecha)),
+    campo('Fecha', selectorFecha),
+  ];
+
+  if (p.cerrado !== null) {
+    return el('div', {}, [...cabecera, corteCerrado(p.cerrado, p.alCopiar)]);
+  }
+
+  const concepto = entrada('text', '', {
+    maxlength: '100',
+    placeholder: 'Concepto',
+    id: ID_CONCEPTO,
+  });
+  const monto = entradaMonto('');
+  const agregar = (): void => {
+    p.alAgregarGasto(concepto.value, monto.value);
+  };
+  for (const control of [concepto, monto]) {
+    control.addEventListener('keydown', (evento) => {
+      if (evento.key === 'Enter') agregar();
+    });
+  }
+
+  const reponer = entradaMonto(p.borrador.reponerCaja === 0 ? '' : pesos(p.borrador.reponerCaja));
+  reponer.addEventListener('change', () => p.alCambiarReponer(reponer.value));
+
+  const fondo = { gasto: FONDO_GASTO, cambio: FONDO_CAMBIO };
+  const bloqueUtilidad = el('section', { clase: 'bloque' });
+
+  /**
+   * Repinta solo este bloque mientras se teclea el monto a reponer. Un render completo por
+   * tecla le quitaria el foco al campo; y esperar al blur dejaria la utilidad mintiendo.
+   */
+  const pintarUtilidad = (): void => {
+    const centavos = centavosDesde(reponer.value) ?? 0;
+    const reparto = calcularReparto(p.ingreso.total, p.borrador.gastos, centavos);
+    limpiar(bloqueUtilidad);
+    for (const nodo of contenidoUtilidad(reparto, fondo)) bloqueUtilidad.appendChild(nodo);
+  };
+  reponer.addEventListener('input', pintarUtilidad);
+  pintarUtilidad();
+
+  const precioCalle = entradaMonto(pesos(p.precios.calle));
+  const precioMayoreo = entradaMonto(pesos(p.precios.mayoreo));
+  const guardarPrecios = (): void => p.alCambiarPrecios(precioCalle.value, precioMayoreo.value);
+
+  return el('div', {}, [
+    ...cabecera,
+
+    bloqueIngreso(p.ingreso, p.precios),
+
+    el('section', { clase: 'bloque' }, [
+      el('h2', { texto: 'Gastos' }),
+      ...listaGastos(p.borrador.gastos, p.alQuitarGasto),
+      lineaDinero(
+        'Total',
+        p.borrador.gastos.reduce((s, g) => s + g.centavos, 0),
+        'corte-total'
+      ),
+      el('div', { clase: 'espaciado' }, [concepto]),
+      el('div', { clase: 'fila-botones' }, [monto, boton('Agregar', 'btn', agregar)]),
+    ]),
+
+    el('section', { clase: 'bloque' }, [
+      el('h2', { texto: 'Reponer caja' }),
+      el('p', {
+        clase: 'detalle',
+        texto:
+          `Solo si la caja quedó abajo de ${importe(FONDO_CAJA)}. Los fondos son rotatorios: ` +
+          'el cambio ya viene dentro del efectivo del día, restarlo sería contarlo dos veces.',
+      }),
+      reponer,
+    ]),
+
+    bloqueUtilidad,
+
+    boton('Cerrar corte', 'btn-venta', () => p.alCerrar(reponer.value)),
+    el('p', {
+      clase: 'detalle espaciado',
+      texto: 'Cerrar guarda el corte como registro inmutable. No se puede deshacer.',
+    }),
+
+    el('div', { clase: 'separador' }),
+    el('section', { clase: 'bloque' }, [
+      el('h3', { texto: 'Precios por pieza' }),
+      el('p', {
+        clase: 'detalle',
+        texto: 'Cada corte cerrado guarda el precio con el que se calculó; cambiarlo no mueve el pasado.',
+      }),
+      el('div', { clase: 'corte-precios' }, [
+        campo('Calle', precioCalle),
+        campo('Mayoreo', precioMayoreo),
+      ]),
+      boton('Guardar precios', 'btn bloque-completo', guardarPrecios),
+    ]),
+  ]);
 }
 
 export type PropsAjustes = {

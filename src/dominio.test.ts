@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AppEvent, LoadEvent, SaleEvent, VoidEvent } from './tipos';
+import type { AppEvent, LoadEvent, SaleEvent, ShiftEvent, VoidEvent } from './tipos';
 import {
   anularUltimaVenta,
   claveFecha,
@@ -11,11 +11,13 @@ import {
   hieleraDe,
   hieleras,
   isoDesdeFechaYHora,
+  jornada,
   mezclar,
   panelVendedor,
   planRespaldo,
   porDia,
   porHora,
+  porLugarYHora,
   porPunto,
   porVendedor,
   puedeAgregarPunto,
@@ -24,6 +26,7 @@ import {
   ritmo,
   totalDelDia,
   totalPiezas,
+  turnoActual,
   ultimaVentaActiva,
   validarEvento,
   ventasActivas,
@@ -48,6 +51,10 @@ function carga(parcial: Partial<LoadEvent> & { id: string; ts: string }): LoadEv
 
 function anulacion(id: string, refId: string): VoidEvent {
   return { id, type: 'void', ts: '2026-07-30T12:00:00', refId, device: 'dev1' };
+}
+
+function turno(parcial: Partial<ShiftEvent> & { id: string; ts: string }): ShiftEvent {
+  return { type: 'shift', point: 'Plazuela', vendor: 'Fran', device: 'dev1', ...parcial };
 }
 
 describe('ventasActivas', () => {
@@ -721,5 +728,215 @@ describe('resumenTexto', () => {
     expect(texto).toContain('Mayoreo: 6');
     expect(texto).toContain('Total: 8');
     expect(texto).not.toContain('99');
+  });
+});
+
+describe('turnoActual', () => {
+  const HOY = '2026-07-30';
+
+  it('es el ultimo lugar marcado por ese vendedor ese dia', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: '2026-07-30T16:00:00', point: 'Plazuela' }),
+      turno({ id: 't2', ts: '2026-07-30T17:00:00', point: 'Parque Sinaloa' }),
+    ];
+    expect(turnoActual(eventos, 'Fran', HOY)?.point).toBe('Parque Sinaloa');
+  });
+
+  it('no mezcla vendedores: cada quien esta parado en su lugar', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: '2026-07-30T16:00:00', point: 'Plazuela', vendor: 'Fran' }),
+      turno({ id: 't2', ts: '2026-07-30T16:05:00', point: 'Parque Sinaloa', vendor: 'Primo' }),
+    ];
+    expect(turnoActual(eventos, 'Fran', HOY)?.point).toBe('Plazuela');
+    expect(turnoActual(eventos, 'Primo', HOY)?.point).toBe('Parque Sinaloa');
+  });
+
+  it('anular el turno devuelve el vendedor al anterior', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: '2026-07-30T16:00:00', point: 'Plazuela' }),
+      turno({ id: 't2', ts: '2026-07-30T17:00:00', point: 'Parque Sinaloa' }),
+      anulacion('v1', 't2'),
+    ];
+    expect(turnoActual(eventos, 'Fran', HOY)?.point).toBe('Plazuela');
+  });
+
+  it('sin lugar marcado no hay turno', () => {
+    expect(turnoActual([venta({ id: 'a', ts: '2026-07-30T16:00:00' })], 'Fran', HOY)).toBeNull();
+  });
+
+  it('el turno de ayer no se arrastra a hoy', () => {
+    const eventos: AppEvent[] = [turno({ id: 't1', ts: '2026-07-29T16:00:00' })];
+    expect(turnoActual(eventos, 'Fran', HOY)).toBeNull();
+  });
+});
+
+describe('jornada', () => {
+  const HOY = '2026-07-30';
+  const AHORA = new Date('2026-07-30T19:00:00');
+
+  it('el turno se cierra cuando empieza el siguiente del mismo vendedor', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: '2026-07-30T16:00:00', point: 'Plazuela' }),
+      venta({ id: 'a', ts: '2026-07-30T16:30:00', point: 'Plazuela', qty: 4 }),
+      turno({ id: 't2', ts: '2026-07-30T17:00:00', point: 'Parque Sinaloa' }),
+      venta({ id: 'b', ts: '2026-07-30T17:30:00', point: 'Parque Sinaloa', qty: 3 }),
+    ];
+    const { turnos } = jornada(eventos, HOY, AHORA);
+    expect(turnos.map((t) => [t.punto, t.piezas])).toEqual([
+      ['Plazuela', 4],
+      ['Parque Sinaloa', 3],
+    ]);
+    expect(turnos[0]?.minutos).toBe(60);
+    expect(turnos[0]?.franja).toBe('16:00–17:00');
+  });
+
+  it('el turno abierto de hoy corre hasta ahora', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: '2026-07-30T18:00:00' }),
+      venta({ id: 'a', ts: '2026-07-30T18:30:00', qty: 2 }),
+    ];
+    const { turnos } = jornada(eventos, HOY, AHORA);
+    expect(turnos[0]?.minutos).toBe(60);
+    expect(turnos[0]?.franja).toBe('18:00–ahora');
+  });
+
+  it('el turno abierto de un dia pasado se cierra en su ultima venta, no contra el reloj de hoy', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: '2026-07-29T16:00:00' }),
+      venta({ id: 'a', ts: '2026-07-29T16:45:00', qty: 2 }),
+    ];
+    const { turnos } = jornada(eventos, '2026-07-29', AHORA);
+    expect(turnos[0]?.minutos).toBe(45);
+    expect(turnos[0]?.franja).toBe('16:00–16:45');
+  });
+
+  it('una venta en otro lugar no se le carga al turno abierto', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: '2026-07-30T16:00:00', point: 'Plazuela' }),
+      venta({ id: 'a', ts: '2026-07-30T16:30:00', point: 'Parque Sinaloa', qty: 5 }),
+    ];
+    const { turnos, sinTurno } = jornada(eventos, HOY, AHORA);
+    expect(turnos[0]?.piezas).toBe(0);
+    expect(sinTurno).toBe(5);
+  });
+
+  it('las ventas anteriores al primer lugar marcado quedan fuera de turno', () => {
+    const eventos: AppEvent[] = [
+      venta({ id: 'a', ts: '2026-07-30T15:00:00', qty: 3 }),
+      turno({ id: 't1', ts: '2026-07-30T16:00:00' }),
+      venta({ id: 'b', ts: '2026-07-30T16:30:00', qty: 2 }),
+    ];
+    const { turnos, sinTurno } = jornada(eventos, HOY, AHORA);
+    expect(turnos[0]?.piezas).toBe(2);
+    expect(sinTurno).toBe(3);
+  });
+
+  it('una venta anulada no cuenta en su turno', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: '2026-07-30T16:00:00' }),
+      venta({ id: 'a', ts: '2026-07-30T16:30:00', qty: 4 }),
+      anulacion('v1', 'a'),
+    ];
+    const { turnos, sinTurno } = jornada(eventos, HOY, AHORA);
+    expect(turnos[0]?.piezas).toBe(0);
+    expect(sinTurno).toBe(0);
+  });
+
+  it('un turno anulado desaparece y sus ventas caen fuera de turno', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: '2026-07-30T16:00:00' }),
+      venta({ id: 'a', ts: '2026-07-30T16:30:00', qty: 4 }),
+      anulacion('v1', 't1'),
+    ];
+    const { turnos, sinTurno } = jornada(eventos, HOY, AHORA);
+    expect(turnos).toEqual([]);
+    expect(sinTurno).toBe(4);
+  });
+
+  it('el ritmo del turno usa el mismo piso de una hora que el del dia', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: '2026-07-30T16:00:00' }),
+      venta({ id: 'a', ts: '2026-07-30T16:05:00', qty: 3 }),
+      turno({ id: 't2', ts: '2026-07-30T16:10:00', point: 'Parque Sinaloa' }),
+    ];
+    const { turnos } = jornada(eventos, HOY, AHORA);
+    expect(turnos[0]?.minutos).toBe(10);
+    expect(turnos[0]?.porHora).toBe(3);
+  });
+
+  it('el mayoreo del lugar tambien entra al turno: sale de la misma hielera', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: '2026-07-30T16:00:00' }),
+      venta({ id: 'a', ts: '2026-07-30T16:30:00', qty: 2 }),
+      venta({ id: 'b', ts: '2026-07-30T16:40:00', qty: 12, channel: 'mayoreo' }),
+    ];
+    expect(jornada(eventos, HOY, AHORA).turnos[0]?.piezas).toBe(14);
+  });
+
+  it('no muta el arreglo de eventos', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't2', ts: '2026-07-30T17:00:00' }),
+      turno({ id: 't1', ts: '2026-07-30T16:00:00' }),
+    ];
+    const copia = [...eventos];
+    jornada(eventos, HOY, AHORA);
+    expect(eventos).toEqual(copia);
+  });
+});
+
+describe('porLugarYHora', () => {
+  it('cruza cada lugar contra cada hora y conserva las horas muertas de en medio', () => {
+    const ventas: SaleEvent[] = [
+      venta({ id: 'a', ts: '2026-07-30T16:10:00', point: 'Plazuela', qty: 3 }),
+      venta({ id: 'b', ts: '2026-07-30T16:40:00', point: 'Plazuela', qty: 2 }),
+      venta({ id: 'c', ts: '2026-07-30T18:10:00', point: 'Parque Sinaloa', qty: 4 }),
+    ];
+    const m = porLugarYHora(ventas);
+    expect(m.horas).toEqual([16, 17, 18]);
+    expect(m.maximo).toBe(5);
+    expect(m.filas.map((f) => [f.punto, f.total])).toEqual([
+      ['Plazuela', 5],
+      ['Parque Sinaloa', 4],
+    ]);
+    expect(m.filas[0]?.celdas.map((c) => c.valor)).toEqual([5, 0, 0]);
+    expect(m.filas[1]?.celdas.map((c) => c.valor)).toEqual([0, 0, 4]);
+  });
+
+  it('sin ventas devuelve una matriz vacia, no una cuadricula de ceros', () => {
+    expect(porLugarYHora([])).toEqual({ horas: [], filas: [], maximo: 0 });
+  });
+
+  it('solo aparecen los lugares con ventas en el rango', () => {
+    const ventas: SaleEvent[] = [venta({ id: 'a', ts: '2026-07-30T16:00:00', point: 'Plazuela' })];
+    expect(porLugarYHora(ventas).filas.map((f) => f.punto)).toEqual(['Plazuela']);
+  });
+});
+
+describe('validarEvento con turnos', () => {
+  it('acepta un turno bien formado', () => {
+    const crudo = {
+      id: 't1',
+      type: 'shift',
+      ts: '2026-07-30T16:00:00',
+      point: 'Plazuela',
+      vendor: 'Fran',
+      device: 'dev2',
+    };
+    expect(validarEvento(crudo)).toEqual(crudo);
+  });
+
+  it('rechaza un turno sin lugar o con vendedor desconocido', () => {
+    const base = { id: 't1', type: 'shift', ts: '2026-07-30T16:00:00', device: 'dev2' };
+    expect(validarEvento({ ...base, vendor: 'Fran' })).toBeNull();
+    expect(validarEvento({ ...base, point: 'Plazuela', vendor: 'Otro' })).toBeNull();
+  });
+
+  it('un turno importado dos veces no se duplica', () => {
+    const t = turno({ id: 't1', ts: '2026-07-30T16:00:00' });
+    const primera = mezclar([], [t]);
+    const segunda = mezclar(primera.eventos, [t]);
+    expect(segunda.nuevos).toBe(0);
+    expect(segunda.repetidos).toBe(1);
+    expect(segunda.eventos).toHaveLength(1);
   });
 });

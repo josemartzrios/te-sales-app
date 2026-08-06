@@ -1,5 +1,7 @@
 import type { AppEvent, Settings } from './tipos';
+import type { Borrador, CorteCerrado, Precios } from './corte';
 import { nuevoDeviceId, planRespaldo, validarAjustes, validarEvento } from './dominio';
+import { PRECIOS_INICIALES, validarBorrador, validarCorte, validarPrecios } from './corte';
 
 // Unico modulo que toca localStorage. Cambiar a sync remoto se hace aqui adentro.
 
@@ -7,6 +9,11 @@ const CLAVE_EVENTOS = 'refreskte:eventos:v1';
 const CLAVE_AJUSTES = 'refreskte:ajustes:v1';
 /** Respaldo previo a la llegada de los eventos 'load'. Se escribe una vez y no se pisa. */
 const CLAVE_RESPALDO = 'rk_ventas_backup_v1';
+
+// Claves del corte de caja. Prefijo propio: el corte jamas escribe sobre las de arriba.
+const CLAVE_CORTES = 'refreskte:cortes:v1';
+const CLAVE_BORRADORES = 'refreskte:cortes-borrador:v1';
+const CLAVE_PRECIOS = 'refreskte:corte-precios:v1';
 
 export type Lectura<T> = { datos: T; aviso: string | null };
 
@@ -106,4 +113,71 @@ export function leerAjustes(): Lectura<Settings> {
 
 export function escribirAjustes(ajustes: Settings): string | null {
   return escribir(CLAVE_AJUSTES, ajustes);
+}
+
+// ---------- corte de caja ----------
+
+/**
+ * Lee un arreglo validando linea por linea, con el mismo trato defensivo que los eventos:
+ * ante JSON ilegible arranca vacio, respalda el crudo y nunca borra nada.
+ */
+function leerLista<T>(clave: string, validar: (v: unknown) => T | null, que: string): Lectura<T[]> {
+  const crudo = leerCrudo(clave);
+  if (crudo === null) return { datos: [], aviso: null };
+
+  let valor: unknown;
+  try {
+    valor = JSON.parse(crudo);
+  } catch {
+    respaldar(clave, crudo);
+    return { datos: [], aviso: `${que} ilegibles. Se respaldaron; no se borro nada.` };
+  }
+  if (!Array.isArray(valor)) {
+    respaldar(clave, crudo);
+    return { datos: [], aviso: `${que} con formato raro. Se respaldaron; no se borro nada.` };
+  }
+
+  const datos: T[] = [];
+  let descartados = 0;
+  for (const item of valor) {
+    const dato = validar(item);
+    if (dato === null) descartados++;
+    else datos.push(dato);
+  }
+  if (descartados > 0) respaldar(clave, crudo);
+  return {
+    datos,
+    aviso: descartados > 0 ? `${descartados} ${que.toLocaleLowerCase()} no se pudieron leer.` : null,
+  };
+}
+
+export function leerCortes(): Lectura<CorteCerrado[]> {
+  return leerLista(CLAVE_CORTES, validarCorte, 'Cortes guardados');
+}
+
+export function escribirCortes(cortes: readonly CorteCerrado[]): string | null {
+  return escribir(CLAVE_CORTES, cortes);
+}
+
+export function leerBorradores(): Lectura<Borrador[]> {
+  return leerLista(CLAVE_BORRADORES, validarBorrador, 'Borradores de corte');
+}
+
+export function escribirBorradores(borradores: readonly Borrador[]): string | null {
+  return escribir(CLAVE_BORRADORES, borradores);
+}
+
+export function leerPrecios(): Precios {
+  const crudo = leerCrudo(CLAVE_PRECIOS);
+  if (crudo === null) return { ...PRECIOS_INICIALES };
+  try {
+    return validarPrecios(JSON.parse(crudo));
+  } catch {
+    respaldar(CLAVE_PRECIOS, crudo);
+    return { ...PRECIOS_INICIALES };
+  }
+}
+
+export function escribirPrecios(precios: Precios): string | null {
+  return escribir(CLAVE_PRECIOS, precios);
 }

@@ -1,4 +1,13 @@
-import type { AppEvent, Canal, LoadEvent, SaleEvent, Settings, Vendedor, VoidEvent } from './tipos';
+import type {
+  AppEvent,
+  Canal,
+  LoadEvent,
+  SaleEvent,
+  Settings,
+  ShiftEvent,
+  Vendedor,
+  VoidEvent,
+} from './tipos';
 
 export const VENDEDORES: readonly Vendedor[] = ['Fran', 'Primo'];
 export const CANALES: readonly Canal[] = ['calle', 'mayoreo'];
@@ -112,6 +121,23 @@ export function crearVenta(entrada: {
   return entrada.retro === true ? { ...venta, retro: true } : venta;
 }
 
+/** Marcar lugar no registra ninguna pieza: solo dice donde esta parado el vendedor desde esa hora. */
+export function crearTurno(entrada: {
+  ts: string;
+  point: string;
+  vendor: Vendedor;
+  device: string;
+}): ShiftEvent {
+  return {
+    id: nuevoId(entrada.device),
+    type: 'shift',
+    ts: entrada.ts,
+    point: entrada.point,
+    vendor: entrada.vendor,
+    device: entrada.device,
+  };
+}
+
 export function crearCarga(entrada: {
   ts: string;
   vendor: Vendedor;
@@ -200,6 +226,31 @@ export function cargasActivas(eventos: readonly AppEvent[]): LoadEvent[] {
 export function cargasDeFecha(eventos: readonly AppEvent[], clave: string): LoadEvent[] {
   const cargas = eventos.filter((e): e is LoadEvent => e.type === 'load' && claveFecha(e.ts) === clave);
   return ordenarPorHora(cargas);
+}
+
+export function turnosActivos(eventos: readonly AppEvent[]): ShiftEvent[] {
+  const anulados = idsAnulados(eventos);
+  return eventos.filter((e): e is ShiftEvent => e.type === 'shift' && !anulados.has(e.id));
+}
+
+/** Todos los turnos de la fecha, anulados incluidos: la vista Hoy los muestra tachados. */
+export function turnosDeFecha(eventos: readonly AppEvent[], clave: string): ShiftEvent[] {
+  const turnos = eventos.filter(
+    (e): e is ShiftEvent => e.type === 'shift' && claveFecha(e.ts) === clave
+  );
+  return ordenarPorHora(turnos);
+}
+
+/** Donde esta parado el vendedor: su ultimo turno activo de esa fecha. null = no ha marcado lugar. */
+export function turnoActual(
+  eventos: readonly AppEvent[],
+  vendedor: Vendedor,
+  clave: string
+): ShiftEvent | null {
+  const suyos = ordenarPorHora(
+    turnosActivos(eventos).filter((t) => t.vendor === vendedor && claveFecha(t.ts) === clave)
+  );
+  return suyos[suyos.length - 1] ?? null;
 }
 
 export function ordenarPorHora<T extends { ts: string; id: string }>(eventos: readonly T[]): T[] {
@@ -383,6 +434,145 @@ export function duracionLegible(minutos: number): string {
   return h === 0 ? `${m}m` : m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
+// ---------- turnos: una hora aprox por lugar ----------
+
+export type Turno = {
+  id: string;
+  vendedor: Vendedor;
+  punto: string;
+  inicio: string;
+  /** Inicio del siguiente turno del mismo vendedor ese dia. null = fue el ultimo, quedo abierto. */
+  fin: string | null;
+  /** Minutos entre el inicio y el cierre efectivo. */
+  minutos: number;
+  piezas: number;
+  /** Piezas por hora del turno, con el mismo piso de una hora que el ritmo del dia. */
+  porHora: number;
+  /** '17:03–18:10', o '17:03–ahora' si es el turno abierto de hoy. */
+  franja: string;
+};
+
+export type Jornada = {
+  turnos: Turno[];
+  /** Piezas del dia que no cayeron en ningun turno: se vendieron sin marcar lugar. */
+  sinTurno: number;
+};
+
+/**
+ * Cada turno con la hora en que lo relevo el siguiente del mismo vendedor.
+ * El ultimo de cada vendedor queda con fin null: sigue abierto.
+ */
+function cerrarTurnos(
+  eventos: readonly AppEvent[],
+  clave: string
+): { turno: ShiftEvent; fin: string | null }[] {
+  const activos = ordenarPorHora(
+    turnosActivos(eventos).filter((t) => claveFecha(t.ts) === clave)
+  );
+  return activos.map((turno, i) => {
+    const siguiente = activos.slice(i + 1).find((o) => o.vendor === turno.vendor);
+    return { turno, fin: siguiente === undefined ? null : siguiente.ts };
+  });
+}
+
+/**
+ * Las ventas que le tocan a un turno: mismo vendedor, mismo lugar y dentro de su ventana.
+ * No hace falta guardar el turno en la venta; asi tambien entran las retroactivas y lo ya capturado.
+ */
+function ventasDeTurno(
+  ventas: readonly SaleEvent[],
+  turno: ShiftEvent,
+  fin: string | null
+): SaleEvent[] {
+  const desde = Date.parse(turno.ts);
+  const hasta = fin === null ? Infinity : Date.parse(fin);
+  return ventas.filter((v) => {
+    if (v.vendor !== turno.vendor || v.point !== turno.point) return false;
+    const t = Date.parse(v.ts);
+    return t >= desde && t < hasta;
+  });
+}
+
+/**
+ * Los turnos del dia con lo que se vendio en cada uno.
+ * El turno abierto de hoy corre hasta `ahora`; el de un dia pasado se cierra en su ultima venta,
+ * porque medirlo contra el reloj de hoy inventaria horas que nadie estuvo parado ahi.
+ */
+export function jornada(eventos: readonly AppEvent[], clave: string, ahora: Date): Jornada {
+  const ventas = ventasActivas(eventos).filter((v) => claveFecha(v.ts) === clave);
+  const esHoy = clave === claveFecha(ahora);
+  const atribuidas = new Set<string>();
+
+  const turnos = cerrarTurnos(eventos, clave).map(({ turno, fin }): Turno => {
+    const suyas = ordenarPorHora(ventasDeTurno(ventas, turno, fin));
+    for (const v of suyas) atribuidas.add(v.id);
+
+    const ultima = suyas[suyas.length - 1];
+    const cierre =
+      fin ?? (esHoy ? isoLocal(ahora) : ultima === undefined ? turno.ts : ultima.ts);
+    const minutos = Math.max(0, Math.round((Date.parse(cierre) - Date.parse(turno.ts)) / 60000));
+    const piezas = totalPiezas(suyas);
+    const tramo = Math.max(minutos, MINUTOS_MINIMOS_RITMO);
+    const abierto = fin === null && esHoy;
+
+    return {
+      id: turno.id,
+      vendedor: turno.vendor,
+      punto: turno.point,
+      inicio: turno.ts,
+      fin,
+      minutos,
+      piezas,
+      porHora: Math.round((piezas / tramo) * 60 * 10) / 10,
+      franja: `${horaMinuto(turno.ts)}–${abierto ? 'ahora' : horaMinuto(cierre)}`,
+    };
+  });
+
+  return { turnos, sinTurno: totalPiezas(ventas.filter((v) => !atribuidas.has(v.id))) };
+}
+
+// ---------- cruce lugar x hora ----------
+
+export type Celda = { punto: string; hora: number; valor: number };
+
+export type Matriz = {
+  /** Rango continuo de horas con actividad: las horas muertas de en medio tambien se ven. */
+  horas: number[];
+  filas: { punto: string; celdas: Celda[]; total: number }[];
+  maximo: number;
+};
+
+/**
+ * Lo que el negocio pregunta de verdad: en que lugar y a que hora se vende.
+ * Solo salen los lugares con ventas en el rango: una cuadricula de ceros no dice nada.
+ */
+export function porLugarYHora(ventas: readonly SaleEvent[]): Matriz {
+  if (ventas.length === 0) return { horas: [], filas: [], maximo: 0 };
+
+  const conteo = sumarPor(ventas, (v) => `${horaDe(v.ts)} ${v.point}`);
+  const horasVistas = ventas.map((v) => horaDe(v.ts));
+  const horas: number[] = [];
+  for (let h = Math.min(...horasVistas); h <= Math.max(...horasVistas); h++) horas.push(h);
+
+  const puntos = [...new Set(ventas.map((v) => v.point))];
+  const filas = puntos
+    .map((punto) => {
+      const celdas = horas.map((hora) => ({
+        punto,
+        hora,
+        valor: conteo.get(`${hora} ${punto}`) ?? 0,
+      }));
+      return { punto, celdas, total: celdas.reduce((s, c) => s + c.valor, 0) };
+    })
+    .sort((a, b) => b.total - a.total || a.punto.localeCompare(b.punto));
+
+  const maximo = filas.reduce(
+    (m, f) => f.celdas.reduce((mm, c) => Math.max(mm, c.valor), m),
+    0
+  );
+  return { horas, filas, maximo };
+}
+
 // ---------- cruce por vendedor: cuanto, a que ritmo y donde ----------
 
 export type PanelVendedor = {
@@ -464,6 +654,13 @@ export function validarEvento(valor: unknown): AppEvent | null {
     if (typeof vendor !== 'string' || !VENDEDORES.includes(vendor as Vendedor)) return null;
     if (typeof qty !== 'number' || !Number.isInteger(qty) || qty < 1) return null;
     return { id, type: 'load', ts, vendor: vendor as Vendedor, qty, device };
+  }
+
+  if (type === 'shift') {
+    const { point, vendor } = valor as Record<string, unknown>;
+    if (!textoValido(point)) return null;
+    if (typeof vendor !== 'string' || !VENDEDORES.includes(vendor as Vendedor)) return null;
+    return { id, type: 'shift', ts, point, vendor: vendor as Vendedor, device };
   }
 
   if (type !== 'sale') return null;
@@ -593,7 +790,12 @@ export function quitarPunto(puntos: readonly string[], nombre: string): string[]
 
 // ---------- resumen compartible ----------
 
-export function resumenTexto(eventos: readonly AppEvent[], clave: string, puntos: readonly string[]): string {
+export function resumenTexto(
+  eventos: readonly AppEvent[],
+  clave: string,
+  puntos: readonly string[],
+  ahora: Date = new Date()
+): string {
   const delDia = ventasActivas(eventos).filter((v) => claveFecha(v.ts) === clave);
   const calle = delDia.filter((v) => v.channel === 'calle');
   const mayoreo = delDia.filter((v) => v.channel === 'mayoreo');
@@ -607,6 +809,13 @@ export function resumenTexto(eventos: readonly AppEvent[], clave: string, puntos
     lineas.push(`Mayoreo: ${totalPiezas(mayoreo)}`);
     for (const { etiqueta, valor } of porPunto(mayoreo, [])) {
       lineas.push(`  ${etiqueta}: ${valor}`);
+    }
+  }
+  const { turnos } = jornada(eventos, clave, ahora);
+  if (turnos.length > 0) {
+    lineas.push('Turnos:');
+    for (const t of turnos) {
+      lineas.push(`  ${t.punto} ${t.franja} · ${t.vendedor}: ${t.piezas}`);
     }
   }
   for (const panel of panelesDelDia(eventos, clave, puntos)) {
