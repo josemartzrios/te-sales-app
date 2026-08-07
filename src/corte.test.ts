@@ -58,8 +58,8 @@ function gasto(id: string, concepto: string, centavos: number): LineaGasto {
 const MAMA_JUANI = gasto('g1', 'Mamá Juani', 4000);
 const GASOLINA = gasto('g2', 'Gasolina', 4500);
 
-function borradorCon(gastos: LineaGasto[], reponerCaja = 0): Borrador {
-  return { fecha: FECHA, gastos, reponerCaja };
+function borradorCon(gastos: LineaGasto[]): Borrador {
+  return { fecha: FECHA, gastos };
 }
 
 // ---------- dinero: formato y captura ----------
@@ -226,20 +226,20 @@ describe('dos lotes de 18 con algo de mayoreo', () => {
 
 describe('calcularReparto', () => {
   it('parte mitad y mitad cuando la utilidad es par en centavos', () => {
-    const reparto = calcularReparto(36000, [MAMA_JUANI, GASOLINA], 0);
+    const reparto = calcularReparto(36000, [MAMA_JUANI, GASOLINA]);
     expect(reparto.fran).toBe(13750);
     expect(reparto.primo).toBe(13750);
   });
 
   it('el centavo impar se lo queda Fran, que trae la caja', () => {
-    const reparto = calcularReparto(27501, [], 0);
+    const reparto = calcularReparto(27501, []);
     expect(reparto.fran).toBe(13751);
     expect(reparto.primo).toBe(13750);
     expect(reparto.fran + reparto.primo).toBe(27501);
   });
 
   it('en perdida Fran tambien absorbe el centavo impar: la regla no cambia de signo', () => {
-    const reparto = calcularReparto(0, [gasto('g', 'Insumos', 4501)], 0);
+    const reparto = calcularReparto(0, [gasto('g', 'Insumos', 4501)]);
     expect(reparto.utilidad).toBe(-4501);
     expect(reparto.fran).toBe(-2251);
     expect(reparto.primo).toBe(-2250);
@@ -247,28 +247,41 @@ describe('calcularReparto', () => {
   });
 
   it('reparte la perdida: un dia malo se reparte igual que uno bueno', () => {
-    const reparto = calcularReparto(4000, [MAMA_JUANI, GASOLINA], 0);
+    const reparto = calcularReparto(4000, [MAMA_JUANI, GASOLINA]);
     expect(importe(reparto.utilidad)).toBe('$-45.00');
     expect(importe(reparto.fran)).toBe('$-22.50');
     expect(importe(reparto.primo)).toBe('$-22.50');
   });
 
-  it('reponer la caja sale antes del reparto', () => {
-    const reparto = calcularReparto(36000, [MAMA_JUANI, GASOLINA], 15000);
-    expect(importe(reparto.utilidad)).toBe('$125.00');
-    expect(importe(reparto.fran)).toBe('$62.50');
-    expect(importe(reparto.primo)).toBe('$62.50');
+  /**
+   * La regresion que costaba dinero de verdad. Antes la utilidad restaba tambien lo que se
+   * reponia a la caja, asi que un gasto pagado con dinero prestado de la caja bajaba el reparto
+   * dos veces: el dia que se compro y el dia que se devolvio el efectivo.
+   */
+  it('reponer la caja no vuelve a bajar la utilidad: el gasto ya se conto una vez', () => {
+    // Dia 1: se sacan 245 de la caja y se compran insumos por 245.
+    const dia1 = calcularReparto(0, [gasto('g', 'Insumos', 24500)]);
+    expect(importe(dia1.utilidad)).toBe('$-245.00');
+
+    // Dia 2: entran 600 y se devuelven los 245 a la caja. Devolver no es gastar.
+    const dia2 = calcularReparto(60000, []);
+    expect(importe(dia2.utilidad)).toBe('$600.00');
+
+    // Los dos dias juntos: 600 de venta menos 245 de insumos. Ni un peso mas.
+    expect(dia1.utilidad + dia2.utilidad).toBe(60000 - 24500);
+    expect(dia1.fran + dia2.fran).toBe(17750);
+    expect(dia1.primo + dia2.primo).toBe(17750);
   });
 
-  it('reponiendo la caja el efectivo esperado sigue cuadrando', () => {
-    const reparto = calcularReparto(36000, [MAMA_JUANI, GASOLINA], 15000);
-    // La caja arranco 150 abajo: (320 - 150) + 360 - 85 = 445.
-    expect(efectivoEsperado(reparto)).toBe(FONDO_CAJA - 15000 + 36000 - 8500);
-    expect(importe(efectivoEsperado(reparto))).toBe('$445.00');
+  it('el efectivo esperado parte de lo que la caja traia, no del fondo teorico', () => {
+    const reparto = calcularReparto(36000, [MAMA_JUANI, GASOLINA]);
+    // La caja arranco 150 abajo porque de ahi salio dinero prestado: (320 - 150) + 360 - 85.
+    expect(efectivoEsperado(reparto, FONDO_CAJA - 15000)).toBe(FONDO_CAJA - 15000 + 36000 - 8500);
+    expect(importe(efectivoEsperado(reparto, FONDO_CAJA - 15000))).toBe('$445.00');
   });
 
   it('un dia sin nada capturado no truena ni inventa', () => {
-    const reparto = calcularReparto(0, [], 0);
+    const reparto = calcularReparto(0, []);
     expect(reparto).toEqual({
       ingreso: 0,
       gastos: 0,
@@ -281,7 +294,7 @@ describe('calcularReparto', () => {
   });
 
   it('las lineas de ajuste de v2 entran con su signo sin tocar nada mas', () => {
-    const reparto = calcularReparto(36000, [MAMA_JUANI, GASOLINA], 0, [
+    const reparto = calcularReparto(36000, [MAMA_JUANI, GASOLINA], [
       { id: 'a1', concepto: 'Adeudo corte anterior', centavos: -5000 },
     ]);
     expect(reparto.ajustes).toBe(-5000);
@@ -289,7 +302,7 @@ describe('calcularReparto', () => {
   });
 
   it('suma en centavos enteros: 0.1 + 0.2 no puede dar 0.30000000000000004', () => {
-    const reparto = calcularReparto(0, [gasto('a', 'a', 10), gasto('b', 'b', 20)], 0);
+    const reparto = calcularReparto(0, [gasto('a', 'a', 10), gasto('b', 'b', 20)]);
     expect(reparto.gastos).toBe(30);
     expect(pesos(reparto.gastos)).toBe('0.30');
   });
@@ -400,7 +413,7 @@ describe('agregarCorte', () => {
 
 describe('borradores', () => {
   it('una fecha sin borrador arranca vacia, no undefined', () => {
-    expect(borradorDe([], FECHA)).toEqual({ fecha: FECHA, gastos: [], reponerCaja: 0 });
+    expect(borradorDe([], FECHA)).toEqual({ fecha: FECHA, gastos: [] });
   });
 
   it('agregar y quitar gastos no muta el borrador anterior', () => {
@@ -418,7 +431,7 @@ describe('borradores', () => {
 
   it('guarda un borrador por fecha y reemplaza el de esa fecha', () => {
     const uno = conGasto(borradorVacio(FECHA), MAMA_JUANI);
-    const otro = borradorCon([GASOLINA], 0);
+    const otro = borradorCon([GASOLINA]);
     const guardados = guardarBorrador(guardarBorrador([], uno), otro);
     expect(guardados).toHaveLength(1);
     expect(guardados[0]?.gastos[0]?.concepto).toBe('Gasolina');
@@ -503,18 +516,20 @@ describe('validarCorte', () => {
 
 describe('validarBorrador y validarPrecios', () => {
   it('lee un borrador guardado', () => {
-    const borrador = borradorCon([MAMA_JUANI], 15000);
+    const borrador = borradorCon([MAMA_JUANI]);
     expect(validarBorrador(JSON.parse(JSON.stringify(borrador)))).toEqual(borrador);
   });
 
   it('sin fecha valida no hay borrador', () => {
-    expect(validarBorrador({ gastos: [], reponerCaja: 0 })).toBeNull();
+    expect(validarBorrador({ gastos: [] })).toBeNull();
     expect(validarBorrador(null)).toBeNull();
   });
 
-  it('un reponerCaja corrupto cae a cero en vez de tirar el borrador', () => {
-    expect(validarBorrador({ fecha: FECHA, gastos: [], reponerCaja: 'mucho' })?.reponerCaja).toBe(0);
-    expect(validarBorrador({ fecha: FECHA, gastos: [], reponerCaja: -5 })?.reponerCaja).toBe(0);
+  it('un borrador viejo se lee sin su reponerCaja: ese monto ahora vive en la caja', () => {
+    expect(validarBorrador({ fecha: FECHA, gastos: [], reponerCaja: 15000 })).toEqual({
+      fecha: FECHA,
+      gastos: [],
+    });
   });
 
   it('los precios corruptos caen a los de fabrica, nunca a cero', () => {
@@ -570,19 +585,20 @@ describe('resumenCorte', () => {
     expect(resumenCorte(corte)).toContain('Mayoreo: 10 × $14.00 = $140.00');
   });
 
-  it('muestra la linea de reponer caja solo cuando se uso', () => {
-    const ingreso = ingresoDeFecha(loteDe18(), FECHA, PRECIOS_INICIALES);
+  it('con snapshot de caja dice cuanto queda y cuanto se sigue debiendo', () => {
     const base = {
-      ingreso,
+      borrador: borradorCon([]),
+      ingreso: ingresoDeFecha(loteDe18(), FECHA, PRECIOS_INICIALES),
       precios: PRECIOS_INICIALES,
       device: 'dev1',
       cerradoEn: `${FECHA}T22:10:00-07:00`,
     };
-    expect(resumenCorte(cerrarCorte({ ...base, borrador: borradorCon([]) }))).not.toContain(
-      'Reponer caja'
-    );
-    expect(
-      resumenCorte(cerrarCorte({ ...base, borrador: borradorCon([], 15000) }))
-    ).toContain('Reponer caja: $150.00');
+
+    const alCorriente = resumenCorte(cerrarCorte({ ...base, caja: { hay: 40500, deuda: 0 } }));
+    expect(alCorriente).toContain('Caja: dejar $405.00');
+    expect(alCorriente).not.toContain('Debemos a la caja');
+
+    const debiendo = resumenCorte(cerrarCorte({ ...base, caja: { hay: 38000, deuda: 2500 } }));
+    expect(debiendo).toContain('Debemos a la caja: $25.00');
   });
 });

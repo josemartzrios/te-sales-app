@@ -10,16 +10,24 @@ import type {
 } from './tipos';
 import type { Barra, Hielera, Matriz, PanelVendedor, Rango, Turno } from './dominio';
 import type { Borrador, CorteCerrado, Ingreso, LineaGasto, Precios, Reparto } from './corte';
+import { calcularReparto, efectivoEsperado, importe, pesos } from './corte';
+import type {
+  EstadoCaja,
+  MovimientoCaja,
+  PlanCaja,
+  SaldoSobre,
+  Sobre,
+  Tasas,
+  TipoMovimiento,
+} from './caja';
 import {
-  FONDO_CAJA,
-  FONDO_CAMBIO,
-  FONDO_GASTO,
-  calcularReparto,
-  centavosDesde,
-  efectivoEsperado,
-  importe,
-  pesos,
-} from './corte';
+  ACCIONES,
+  NOMBRE_SOBRE,
+  SOBRES,
+  movimientosRecientes,
+  planCaja,
+  sobresEnDeuda,
+} from './caja';
 import {
   HIELERA_BAJA,
   HIELERA_CRITICA,
@@ -1128,13 +1136,24 @@ export type PropsCorte = {
   borrador: Borrador;
   /** El corte cerrado de esa fecha, si ya existe. Con esto la vista pasa a solo lectura. */
   cerrado: CorteCerrado | null;
+  /** Estado de la caja ahora mismo, no al cierre: se repinta con cada movimiento. */
+  caja: EstadoCaja;
+  movimientos: readonly MovimientoCaja[];
+  tasas: Tasas;
   alCambiarFecha: (f: string) => void;
   alAgregarGasto: (concepto: string, monto: string) => void;
   alQuitarGasto: (id: string) => void;
-  alCambiarReponer: (monto: string) => void;
+  alMoverCaja: (entrada: {
+    tipo: TipoMovimiento;
+    sobre: Sobre;
+    monto: string;
+    concepto: string;
+  }) => void;
+  alCambiarTasas: (gasolina: string, gas: string) => void;
   alCambiarPrecios: (calle: string, mayoreo: string) => void;
-  alCerrar: (reponer: string) => void;
+  alCerrar: () => void;
   alCopiar: () => void;
+  alCopiarCaja: () => void;
 };
 
 const ID_CONCEPTO = 'corte-concepto';
@@ -1195,8 +1214,12 @@ function listaGastos(
   );
 }
 
-function contenidoUtilidad(reparto: Reparto, fondo: { gasto: number; cambio: number }): Node[] {
-  const total = fondo.gasto + fondo.cambio;
+/**
+ * Solo el resultado del dia: ingreso, gastos y la mitad de cada quien. Nada de la caja entra
+ * aqui —ni fondos, ni apartados, ni reponer lo prestado—: eso es efectivo cambiando de sobre,
+ * no dinero que el negocio gano o perdio, y restarlo cobraria el mismo gasto dos veces.
+ */
+function contenidoUtilidad(reparto: Reparto, pie: HTMLElement | null): Node[] {
   return [
     el('h2', { texto: 'Utilidad' }),
     lineaDinero('Ingreso', reparto.ingreso),
@@ -1214,14 +1237,157 @@ function contenidoUtilidad(reparto: Reparto, fondo: { gasto: number; cambio: num
         el('span', { clase: 'corte-cifra num', texto: importe(reparto.primo) }),
       ]),
     ]),
+    pie,
+  ].filter((n): n is HTMLElement => n !== null);
+}
+
+// ---------- caja: sobres, deuda y movimientos ----------
+
+/** Una linea de sobre: cuanto hay contra cuanto deberia haber, y lo que falta si falta. */
+function lineaSobre(s: SaldoSobre): HTMLElement {
+  const rotulo = el('span', {}, [
+    document.createTextNode(NOMBRE_SOBRE[s.sobre]),
+    s.deuda > 0
+      ? el('span', { clase: 'detalle', texto: ` faltan ${importe(s.deuda)}` })
+      : null,
+  ]);
+  return el('div', { clase: `corte-linea${s.deuda > 0 ? ' caja-corto' : ''}` }, [
+    rotulo,
+    el('span', {
+      clase: 'num',
+      texto: s.hay === s.objetivo ? importe(s.hay) : `${importe(s.hay)} / ${pesos(s.objetivo)}`,
+    }),
+  ]);
+}
+
+function historialCaja(movimientos: readonly MovimientoCaja[]): HTMLElement[] {
+  const recientes = movimientosRecientes(movimientos, 12);
+  if (recientes.length === 0) {
+    return [el('p', { clase: 'vacio', texto: 'Sin movimientos todavía.' })];
+  }
+  return recientes.map((m) =>
+    el('div', { clase: 'corte-linea' }, [
+      el('span', {}, [
+        document.createTextNode(`${NOMBRE_SOBRE[m.sobre]} · ${m.concepto}`),
+        el('span', { clase: 'detalle', texto: ` ${horaMinuto(m.ts)}` }),
+      ]),
+      el('span', { clase: 'num', texto: importe(m.centavos) }),
+    ])
+  );
+}
+
+/**
+ * El formulario de movimientos: un boton por accion, el sobre y el monto. El signo nunca se
+ * teclea —lo pone la accion— porque a las once de la noche un menos de mas descuadra la caja.
+ */
+function capturaCaja(
+  alMover: (e: { tipo: TipoMovimiento; sobre: Sobre; monto: string; concepto: string }) => void
+): HTMLElement {
+  const sobre = selector([...SOBRES], 'gasolina');
+  const opciones = sobre.querySelectorAll('option');
+  SOBRES.forEach((s, i) => {
+    const opcion = opciones[i];
+    if (opcion !== undefined) opcion.textContent = NOMBRE_SOBRE[s];
+  });
+
+  const monto = entradaMonto('');
+  const concepto = entrada('text', '', { maxlength: '100', placeholder: 'Concepto (insumos…)' });
+
+  const botones = ACCIONES.map((a) =>
+    boton(a.etiqueta, 'btn', () => {
+      alMover({
+        tipo: a.tipo,
+        sobre: sobre.value as Sobre,
+        monto: monto.value,
+        concepto: concepto.value,
+      });
+      monto.value = '';
+      concepto.value = '';
+    })
+  );
+
+  return el('div', { clase: 'espaciado' }, [
+    campo('Sobre', sobre),
+    el('div', { clase: 'fila-botones' }, [monto, concepto]),
+    el('div', { clase: 'caja-acciones' }, botones),
+  ]);
+}
+
+function bloqueCaja(p: PropsCorte): HTMLElement {
+  const faltantes = sobresEnDeuda(p.caja);
+  return el('section', { clase: 'bloque' }, [
+    el('h2', { texto: 'Caja' }),
     el('p', {
+      clase: 'detalle',
+      texto:
+        'Dónde está el dinero, no cuánto ganamos. Prestar y devolver mueve efectivo entre ' +
+        'sobres: nunca toca la utilidad.',
+    }),
+    ...p.caja.sobres.map(lineaSobre),
+    lineaDinero('Efectivo en la caja', p.caja.hay, 'corte-total'),
+    faltantes.length === 0
+      ? el('p', { clase: 'detalle', texto: 'La caja está al corriente.' })
+      : el('p', {
+          clase: 'aviso num',
+          texto:
+            `Debes a la caja ${importe(p.caja.deuda)}: ` +
+            faltantes.map((s) => `${NOMBRE_SOBRE[s.sobre]} ${importe(s.deuda)}`).join(' · '),
+        }),
+    capturaCaja(p.alMoverCaja),
+    // Lo que se le manda a Primo el sabado: cuanto lleva acumulado y como esta la caja.
+    boton('Copiar caja', 'btn bloque-completo espaciado', p.alCopiarCaja),
+    el('h3', { clase: 'espaciado', texto: 'Últimos movimientos' }),
+    ...historialCaja(p.movimientos),
+  ]);
+}
+
+/**
+ * Lo que hay que hacer con el efectivo antes de repartir. Va aparte de la utilidad a proposito:
+ * son dos numeros distintos y confundirlos es justo lo que descuadra la caja.
+ */
+function bloqueCierre(plan: PlanCaja, caja: EstadoCaja, reparto: Reparto): HTMLElement {
+  return el('section', { clase: 'bloque' }, [
+    el('h2', { texto: 'Al cerrar' }),
+    lineaDinero('Efectivo esperado', efectivoEsperado(reparto, caja.hay)),
+    el('p', {
+      clase: 'detalle',
+      texto: 'Cuenta el bulto: lo que traía la caja más la utilidad del día. Luego reparte.',
+    }),
+    lineaDinero('Se queda en la caja', plan.seQuedaEnCaja, 'corte-total'),
+    plan.primo === 0 ? null : lineaDinero('· Mitad de Primo (paga semanal)', plan.primo),
+    ...plan.apartados.map((a) => lineaDinero(`· ${NOMBRE_SOBRE[a.sobre]}`, a.centavos)),
+    plan.reponer === 0 ? null : lineaDinero('· Devolver lo prestado', plan.reponer),
+    lineaDinero('Te llevas', plan.paraFran, 'corte-total'),
+    plan.restante === 0
+      ? null
+      : el('p', {
+          clase: 'aviso num',
+          texto: `Quedan debiendo ${importe(plan.restante)} a la caja: no alcanzó hoy.`,
+        }),
+  ]);
+}
+
+/**
+ * Como quedo la caja segun el corte, leido de su snapshot. Los cortes cerrados antes de los
+ * sobres no lo traen: de esos solo se sabe el fondo teorico que se guardo entonces.
+ */
+function pieCajaCerrada(c: CorteCerrado): HTMLElement {
+  if (c.caja === null) {
+    const total = c.fondo.gasto + c.fondo.cambio;
+    return el('p', {
       clase: 'detalle num',
       texto:
-        `Deja ${importe(total)} en la caja (${pesos(fondo.gasto)} gasto + ` +
-        `${pesos(fondo.cambio)} cambio). Efectivo esperado al cerrar: ` +
-        `${importe(efectivoEsperado(reparto, total))}.`,
-    }),
-  ].filter((n): n is HTMLElement => n !== null);
+        `Deja ${importe(total)} en la caja (${pesos(c.fondo.gasto)} gasto + ` +
+        `${pesos(c.fondo.cambio)} cambio). Efectivo esperado al cerrar: ` +
+        `${importe(efectivoEsperado(c.reparto, total))}.`,
+    });
+  }
+  const deuda =
+    c.caja.deuda > 0 ? ` Quedaron debiendo ${importe(c.caja.deuda)} a la caja.` : '';
+  return el('p', {
+    clase: 'detalle num',
+    texto: `Quedaron ${importe(c.caja.hay)} en la caja.${deuda}`,
+  });
 }
 
 /** Corte ya cerrado: se pinta desde el snapshot guardado, nunca recalculando contra las ventas de hoy. */
@@ -1237,7 +1403,7 @@ function corteCerrado(c: CorteCerrado, alCopiar: () => void): HTMLElement {
       ...listaGastos(c.gastos, null),
       lineaDinero('Total', c.reparto.gastos, 'corte-total'),
     ]),
-    el('section', { clase: 'bloque' }, contenidoUtilidad(c.reparto, c.fondo)),
+    el('section', { clase: 'bloque' }, contenidoUtilidad(c.reparto, pieCajaCerrada(c))),
     boton('Copiar resumen', 'btn bloque-completo', alCopiar),
     el('p', {
       clase: 'detalle espaciado',
@@ -1258,8 +1424,10 @@ export function vistaCorte(p: PropsCorte): HTMLElement {
     campo('Fecha', selectorFecha),
   ];
 
+  // La caja se sigue pudiendo mover con el corte ya cerrado: cargar gasolina o pagarle a Primo
+  // pasa despues de cerrar, y su estado es de hoy, no de la fecha que se este mirando.
   if (p.cerrado !== null) {
-    return el('div', {}, [...cabecera, corteCerrado(p.cerrado, p.alCopiar)]);
+    return el('div', {}, [...cabecera, corteCerrado(p.cerrado, p.alCopiar), bloqueCaja(p)]);
   }
 
   const concepto = entrada('text', '', {
@@ -1277,24 +1445,18 @@ export function vistaCorte(p: PropsCorte): HTMLElement {
     });
   }
 
-  const reponer = entradaMonto(p.borrador.reponerCaja === 0 ? '' : pesos(p.borrador.reponerCaja));
-  reponer.addEventListener('change', () => p.alCambiarReponer(reponer.value));
+  const reparto = calcularReparto(p.ingreso.total, p.borrador.gastos);
+  const plan = planCaja({
+    utilidad: reparto.utilidad,
+    primo: reparto.primo,
+    deuda: p.caja.deuda,
+    tasas: p.tasas,
+    huboVentas: p.ingreso.total > 0,
+  });
 
-  const fondo = { gasto: FONDO_GASTO, cambio: FONDO_CAMBIO };
-  const bloqueUtilidad = el('section', { clase: 'bloque' });
-
-  /**
-   * Repinta solo este bloque mientras se teclea el monto a reponer. Un render completo por
-   * tecla le quitaria el foco al campo; y esperar al blur dejaria la utilidad mintiendo.
-   */
-  const pintarUtilidad = (): void => {
-    const centavos = centavosDesde(reponer.value) ?? 0;
-    const reparto = calcularReparto(p.ingreso.total, p.borrador.gastos, centavos);
-    limpiar(bloqueUtilidad);
-    for (const nodo of contenidoUtilidad(reparto, fondo)) bloqueUtilidad.appendChild(nodo);
-  };
-  reponer.addEventListener('input', pintarUtilidad);
-  pintarUtilidad();
+  const tasaGasolina = entradaMonto(pesos(p.tasas.gasolina));
+  const tasaGas = entradaMonto(pesos(p.tasas.gas));
+  const guardarTasas = (): void => p.alCambiarTasas(tasaGasolina.value, tasaGas.value);
 
   const precioCalle = entradaMonto(pesos(p.precios.calle));
   const precioMayoreo = entradaMonto(pesos(p.precios.mayoreo));
@@ -1317,24 +1479,35 @@ export function vistaCorte(p: PropsCorte): HTMLElement {
       el('div', { clase: 'fila-botones' }, [monto, boton('Agregar', 'btn', agregar)]),
     ]),
 
+    el('section', { clase: 'bloque' }, contenidoUtilidad(reparto, null)),
+
+    bloqueCaja(p),
+
+    bloqueCierre(plan, p.caja, reparto),
+
+    boton('Cerrar corte', 'btn-venta', p.alCerrar),
+    el('p', {
+      clase: 'detalle espaciado',
+      texto:
+        'Cerrar guarda el corte como registro inmutable y aparta lo del día en la caja. ' +
+        'No se puede deshacer.',
+    }),
+
+    el('div', { clase: 'separador' }),
     el('section', { clase: 'bloque' }, [
-      el('h2', { texto: 'Reponer caja' }),
+      el('h3', { texto: 'Apartado por día de venta' }),
       el('p', {
         clase: 'detalle',
         texto:
-          `Solo si la caja quedó abajo de ${importe(FONDO_CAJA)}. Los fondos son rotatorios: ` +
-          'el cambio ya viene dentro del efectivo del día, restarlo sería contarlo dos veces.',
+          'Lo que se guarda en la caja cada día que se vende. No es gasto: el gasto entra el ' +
+          'día que se paga la gasolina o el gas.',
       }),
-      reponer,
+      el('div', { clase: 'corte-precios' }, [
+        campo('Gasolina', tasaGasolina),
+        campo('Gas (Mamá Juani)', tasaGas),
+      ]),
+      boton('Guardar apartado', 'btn bloque-completo', guardarTasas),
     ]),
-
-    bloqueUtilidad,
-
-    boton('Cerrar corte', 'btn-venta', () => p.alCerrar(reponer.value)),
-    el('p', {
-      clase: 'detalle espaciado',
-      texto: 'Cerrar guarda el corte como registro inmutable. No se puede deshacer.',
-    }),
 
     el('div', { clase: 'separador' }),
     el('section', { clase: 'bloque' }, [

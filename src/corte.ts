@@ -19,6 +19,8 @@ export const PRECIO_MAYOREO = 1400;
  * Fondos rotatorios de la caja, en centavos. NO son gastos ni se restan del reparto:
  * el cambio sale en morralla y regresa dentro del efectivo de las ventas, asi que restarlo
  * seria contarlo dos veces. Solo aparecen como la linea de verificacion "deja esto en la caja".
+ *
+ * Son la base de los sobres 'fondo' y 'cambio' de caja.ts, que lleva el resto de la tesoreria.
  */
 export const FONDO_GASTO = 20000;
 export const FONDO_CAMBIO = 12000;
@@ -69,6 +71,10 @@ export type Ingreso = {
 export type Reparto = {
   ingreso: number;
   gastos: number;
+  /**
+   * Congelado en 0 desde que la caja se lleva en sobres (caja.ts). Se conserva en el tipo
+   * porque los cortes ya cerrados lo traen con valor y son inmutables: se leen tal cual.
+   */
   reponerCaja: number;
   ajustes: number;
   utilidad: number;
@@ -80,8 +86,14 @@ export type Reparto = {
 export type Borrador = {
   fecha: string;
   gastos: LineaGasto[];
-  /** Centavos que hay que devolver a la caja porque quedo por debajo de FONDO_CAJA. Normalmente 0. */
-  reponerCaja: number;
+};
+
+/** Como estaba la caja en el momento de cerrar. null en los cortes anteriores a los sobres. */
+export type CajaAlCerrar = {
+  /** Efectivo que debia quedar en la caja despues del cierre. */
+  hay: number;
+  /** Lo que seguia debiendosele a la caja. */
+  deuda: number;
 };
 
 /**
@@ -100,6 +112,8 @@ export type CorteCerrado = {
   reponerCaja: number;
   ajustes: LineaAjuste[];
   fondo: { gasto: number; cambio: number };
+  /** Snapshot de la caja al cerrar. null en los cortes cerrados antes de que existieran los sobres. */
+  caja: CajaAlCerrar | null;
   /** Congelado, no derivado en lectura: cambiar la formula manana no puede mover un corte de ayer. */
   reparto: Reparto;
 };
@@ -107,7 +121,7 @@ export type CorteCerrado = {
 export const PRECIOS_INICIALES: Precios = { calle: PRECIO_CALLE, mayoreo: PRECIO_MAYOREO };
 
 export function borradorVacio(fecha: string): Borrador {
-  return { fecha, gastos: [], reponerCaja: 0 };
+  return { fecha, gastos: [] };
 }
 
 // ---------- dinero: formato y captura ----------
@@ -176,11 +190,13 @@ function sumar(lineas: readonly { centavos: number }[]): number {
 }
 
 /**
- * utilidad = ingreso - gastos - reponer caja (+ ajustes de v2).
+ * utilidad = ingreso - gastos (+ ajustes de v2).
  *
- * Los fondos de la caja NO se restan aqui: son rotatorios, no costos. 'reponerCaja' es la
- * excepcion y solo se llena el dia que la caja quedo por debajo de su fondo (por ejemplo,
- * porque de ahi salio el pago semanal del socio) y hay que rehacerla con las ventas de hoy.
+ * Nada de la caja se resta aqui. Los fondos son rotatorios, no costos. Y reponer la caja
+ * tampoco es un costo: es devolver efectivo prestado, y lo que se compro con ese efectivo ya
+ * bajo la utilidad el dia que se compro. Restarlo otra vez al reponer cobraba el mismo gasto
+ * dos veces —el error que ya se habia corregido con el fondo y el cambio, escondido en otra
+ * linea—. La tesoreria de la caja vive completa en caja.ts y no toca este numero.
  *
  * El reparto es mitad y mitad. El centavo impar se lo queda Fran, que es quien trae la caja:
  * en una utilidad positiva le toca de mas y en una negativa absorbe de mas, siempre igual.
@@ -188,18 +204,17 @@ function sumar(lineas: readonly { centavos: number }[]): number {
 export function calcularReparto(
   ingreso: number,
   gastos: readonly LineaGasto[],
-  reponerCaja: number,
   ajustes: readonly LineaAjuste[] = []
 ): Reparto {
   const totalGastos = sumar(gastos);
   const totalAjustes = sumar(ajustes);
-  const utilidad = ingreso - totalGastos - reponerCaja + totalAjustes;
+  const utilidad = ingreso - totalGastos + totalAjustes;
   const primo = Math.trunc(utilidad / 2);
 
   return {
     ingreso,
     gastos: totalGastos,
-    reponerCaja,
+    reponerCaja: 0,
     ajustes: totalAjustes,
     utilidad,
     fran: utilidad - primo,
@@ -208,16 +223,18 @@ export function calcularReparto(
 }
 
 export function repartoDeBorrador(borrador: Borrador, ingreso: Ingreso): Reparto {
-  return calcularReparto(ingreso.total, borrador.gastos, borrador.reponerCaja);
+  return calcularReparto(ingreso.total, borrador.gastos);
 }
 
 /**
- * Lo que debe haber en efectivo al cerrar, antes de repartir: el fondo de la caja mas la
- * utilidad del dia. Fran cuenta el dinero y lo compara; si cuadra, entrega los dos repartos
- * y en la caja quedan exactamente los fondos para manana.
+ * Lo que debe haber en efectivo al cerrar, antes de repartir: lo que traia la caja al abrir
+ * mas la utilidad del dia. Fran cuenta el dinero y lo compara.
+ *
+ * `enCaja` es el efectivo real de los sobres al abrir (caja.ts), no el fondo teorico: si ayer
+ * quedo debiendo, hoy hay menos en la caja y esperar los 320 completos seria mentir.
  */
-export function efectivoEsperado(reparto: Reparto, fondo = FONDO_CAJA): number {
-  return fondo + reparto.utilidad;
+export function efectivoEsperado(reparto: Reparto, enCaja = FONDO_CAJA): number {
+  return enCaja + reparto.utilidad;
 }
 
 // ---------- cierre ----------
@@ -228,6 +245,8 @@ export function cerrarCorte(entrada: {
   precios: Precios;
   device: string;
   cerradoEn: string;
+  /** Como quedo la caja despues de aplicar los movimientos del cierre. */
+  caja?: CajaAlCerrar;
 }): CorteCerrado {
   return {
     version: 1,
@@ -241,9 +260,10 @@ export function cerrarCorte(entrada: {
       total: entrada.ingreso.total,
     },
     gastos: entrada.borrador.gastos.map((g) => ({ ...g })),
-    reponerCaja: entrada.borrador.reponerCaja,
+    reponerCaja: 0,
     ajustes: [],
     fondo: { gasto: FONDO_GASTO, cambio: FONDO_CAMBIO },
+    caja: entrada.caja === undefined ? null : { ...entrada.caja },
     reparto: repartoDeBorrador(entrada.borrador, entrada.ingreso),
   };
 }
@@ -279,8 +299,7 @@ export function guardarBorrador(
   borrador: Borrador
 ): Borrador[] {
   const otros = borradores.filter((b) => b.fecha !== borrador.fecha);
-  const vacio = borrador.gastos.length === 0 && borrador.reponerCaja === 0;
-  return vacio ? otros : [...otros, borrador];
+  return borrador.gastos.length === 0 ? otros : [...otros, borrador];
 }
 
 export function nuevaLinea(concepto: string, centavos: number, semilla: string): LineaGasto {
@@ -342,15 +361,12 @@ export function validarPrecios(valor: unknown): Precios {
   };
 }
 
+/** El 'reponerCaja' de los borradores viejos se ignora: ese monto ahora vive en caja.ts. */
 export function validarBorrador(valor: unknown): Borrador | null {
   if (typeof valor !== 'object' || valor === null || Array.isArray(valor)) return null;
-  const { fecha, gastos, reponerCaja } = valor as Record<string, unknown>;
+  const { fecha, gastos } = valor as Record<string, unknown>;
   if (!fechaValida(fecha)) return null;
-  return {
-    fecha,
-    gastos: validarLineas(gastos, 1),
-    reponerCaja: centavosValidos(reponerCaja, 0) ? reponerCaja : 0,
-  };
+  return { fecha, gastos: validarLineas(gastos, 1) };
 }
 
 function validarCanal(valor: unknown): IngresoCanal | null {
@@ -378,6 +394,14 @@ function validarReparto(valor: unknown): Reparto | null {
     fran: campos['fran'] as number,
     primo: campos['primo'] as number,
   };
+}
+
+/** Ausente o ilegible = corte anterior a los sobres: se lee sin snapshot de caja, no se inventa. */
+function validarCajaAlCerrar(valor: unknown): CajaAlCerrar | null {
+  if (typeof valor !== 'object' || valor === null || Array.isArray(valor)) return null;
+  const { hay, deuda } = valor as Record<string, unknown>;
+  if (!centavosValidos(hay, -MONTO_MAXIMO) || !centavosValidos(deuda, -MONTO_MAXIMO)) return null;
+  return { hay, deuda };
 }
 
 /**
@@ -410,6 +434,7 @@ export function validarCorte(valor: unknown): CorteCerrado | null {
   const cambio = fondo['cambio'];
 
   return {
+    caja: validarCajaAlCerrar(campos['caja']),
     version: 1,
     fecha: campos['fecha'],
     cerradoEn: campos['cerradoEn'],
@@ -458,10 +483,16 @@ export function resumenCorte(corte: CorteCerrado): string {
   lineas.push(`Primo: ${importe(reparto.primo)}`);
   lineas.push('');
 
-  const total = fondo.gasto + fondo.cambio;
-  lineas.push(
-    `Caja: dejar ${importe(total)} (${pesos(fondo.gasto)} gasto + ${pesos(fondo.cambio)} cambio)`
-  );
-  lineas.push(`Efectivo esperado al cerrar: ${importe(efectivoEsperado(reparto, total))}`);
+  if (corte.caja === null) {
+    // Corte anterior a los sobres: la unica verdad que guardo fue el fondo teorico.
+    const total = fondo.gasto + fondo.cambio;
+    lineas.push(
+      `Caja: dejar ${importe(total)} (${pesos(fondo.gasto)} gasto + ${pesos(fondo.cambio)} cambio)`
+    );
+    lineas.push(`Efectivo esperado al cerrar: ${importe(efectivoEsperado(reparto, total))}`);
+  } else {
+    lineas.push(`Caja: dejar ${importe(corte.caja.hay)}`);
+    if (corte.caja.deuda > 0) lineas.push(`Debemos a la caja: ${importe(corte.caja.deuda)}`);
+  }
   return lineas.join('\n');
 }

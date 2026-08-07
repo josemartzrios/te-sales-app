@@ -1,7 +1,7 @@
 // Service worker minimo: app shell precacheado + cache-first para el resto del origen.
 // Los assets de Vite llevan hash en el nombre, por eso cache-first no sirve contenido viejo:
 // un build nuevo pide URLs nuevas. Subir CACHE limpia lo anterior.
-const CACHE = 'refreskte-v4';
+const CACHE = 'refreskte-v5';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icono-192.png', '/icono-512.png'];
 
 self.addEventListener('install', (evento) => {

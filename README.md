@@ -80,8 +80,16 @@ En **Corte**, el ingreso del día ya viene sumado de las ventas (calle × $20, m
 canal para validarlo de un vistazo contra el efectivo real. Se capturan los gastos línea por línea
 (concepto + monto) y abajo sale la utilidad y cuánto le toca a cada quien, mitad y mitad.
 
-**Cerrar corte** lo guarda como registro inmutable, y **Copiar resumen** manda el texto por WhatsApp o al
-portapapeles. Ver **El corte de caja** más abajo para las reglas.
+Abajo va el bloque **Caja**: cuánto hay en cada sobre (fondo, cambio, gasolina, gas, sueldo de Primo) y
+cuánto se le debe a la caja si se tomó dinero prestado. Ahí mismo se registra con un toque: **Tomé
+prestado**, **Devolví**, **Pagué** o **Aparté** — el signo lo pone el botón, no se teclea.
+
+Después, **Al cerrar** dice lo único que hay que ejecutar: cuánto efectivo debería haber en el bulto,
+cuánto se queda en la caja y cuánto se lleva Fran.
+
+**Cerrar corte** lo guarda como registro inmutable, aparta lo del día y devuelve lo que se debe hasta donde
+alcance. **Copiar resumen** manda el texto por WhatsApp o al portapapeles. Ver **El corte de caja** y
+**La caja** más abajo para las reglas.
 
 Luego, el respaldo entre los dos teléfonos: ver **Ritual diario** más abajo.
 
@@ -224,19 +232,15 @@ evento `transfer`: **la venta es de quien la hace, pero la botella es de quien l
 
 ```
 Ingreso   = piezas de calle × $20.00 + piezas de mayoreo × $14.00
-Utilidad  = ingreso − gastos − reponer caja
+Utilidad  = ingreso − gastos
 Fran = Primo = utilidad ÷ 2
 ```
 
 - **El corte solo LEE las ventas.** No modifica, no migra y no normaliza el histórico. Escribe únicamente
   en sus propias claves (`refreskte:cortes:v1`, `refreskte:cortes-borrador:v1`, `refreskte:corte-precios:v1`).
-- **Los fondos de la caja no se restan del reparto.** Los $200 de gasto y los $120 de cambio son
-  rotatorios, no costos: el cambio sale en morralla y regresa dentro del efectivo de las ventas, así que
-  restarlo sería contarlo dos veces y estacionar $120 al día que nadie vuelve a tocar. El corte solo
-  recuerda **dejar $320 en la caja** y dice cuánto efectivo debe haber al cerrar (`320 + utilidad`).
-- **"Reponer caja"** es la excepción, y casi siempre va en 0: se llena el día que la caja quedó *por debajo*
-  de $320 —por ejemplo porque de ahí salió el pago semanal del socio— y hay que rehacerla con las ventas de
-  hoy. Ese monto sí sale antes del reparto.
+- **Nada de la caja entra en la utilidad.** Los $200 de fondo y los $120 de cambio son rotatorios, no
+  costos: el cambio sale en morralla y regresa dentro del efectivo de las ventas, así que restarlo sería
+  contarlo dos veces. Y reponer lo prestado tampoco es un costo — ver **La caja** más abajo.
 - **Todo el dinero se maneja en centavos enteros**, nunca en floats. El centavo impar del 50/50 se lo queda
   Fran, que trae la caja: le toca de más en un día bueno y absorbe de más en uno malo.
 - **Un día en pérdida se reparte igual** (−50/−50). No se bloquea ni se redondea a cero: la ganancia está
@@ -256,12 +260,86 @@ Fran = Primo = utilidad ÷ 2
 - El **borrador** del día en curso sí es editable, uno por fecha, y se descarta al cerrar.
 - Toda lectura es defensiva: con el JSON corrupto la app arranca vacía, respalda el crudo y no borra nada.
 
-### Fuera de alcance del corte (v1)
+### Fuera de alcance del corte
 
-Fondo operativo como línea de reparto, gasolina apartada, custodia del socio, cuentas por cobrar de
-mayoreo, mecánica formal de adeudos, cuadre físico de botellas, reportes y gráficas de cortes, edición de
-cortes cerrados. El pago semanal al socio es físico y no lo lleva la app: el corte solo acumula cuánto le
-tocó cada día.
+Cuentas por cobrar de mayoreo, cuadre físico de botellas, reportes y gráficas de cortes, edición de cortes
+cerrados.
+
+## La caja
+
+El corte responde *cuánto ganamos*. La caja responde *dónde está el dinero y de quién es*. Son **dos libros
+distintos a propósito**, y mezclarlos es el error que cuesta dinero de verdad.
+
+El dinero de la caja vive en cinco **sobres**. No son bolsas físicas separadas —el efectivo es un solo
+bulto— sino a quién le toca cada peso:
+
+| Sobre | Qué es | Cómo crece | Cómo baja |
+| --- | --- | --- | --- |
+| Fondo | $200 rotatorio | fijo, no crece | solo si se toma prestado |
+| Cambio | $120 rotatorio | fijo, no crece | solo si se toma prestado |
+| Gasolina | provisión | $45 por día de venta | al cargar gasolina |
+| Gas (Mamá Juani) | provisión | $40 por día de venta | al pagarle |
+| Sueldo de Primo | pasivo | su mitad de cada corte cerrado | al pagarle el sábado |
+
+```
+efectivo que debe haber en la caja = Σ sobres − deuda
+deuda a la caja                    = Σ préstamos − Σ reposiciones
+```
+
+### Reponer la caja NO baja la utilidad
+
+Esta es la regla que hay que tener clara. Si tomo $245 de la caja y compro insumos, **los insumos ya bajaron
+la utilidad el día que los compré**. Devolver ese efectivo a la caja mañana no vuelve a costar nada: es el
+mismo dinero regresando a su lugar.
+
+```
+Día 1: se sacan 245 de la caja, se compran insumos por 245
+       gasto "Insumos 245"  →  utilidad −245  (−122.50 cada quien)
+
+Día 2: entran 600 y se devuelven los 245 a la caja
+       utilidad +600  (+300 cada quien)
+
+       Los dos días: 600 − 245 = 355  →  177.50 cada quien.  ✅
+```
+
+Restar también la reposición daría 55 por cabeza en vez de 177.50: el mismo gasto cobrado dos veces. Es el
+mismo error del fondo y el cambio, escondido en otra línea. **Ningún movimiento de la caja toca la utilidad.**
+
+### Los cuatro movimientos
+
+El **signo** siempre dice lo mismo (`+` entra a la caja, `−` sale). El **tipo** dice si además cambia lo que
+ese sobre *debería* tener:
+
+| Movimiento | Efectivo | Debería haber | Ejemplo |
+| --- | --- | --- | --- |
+| Aparté | + | + | se guardan los $45 del día para gasolina |
+| Pagué | − | − | se carga gasolina, se le paga a Primo |
+| Tomé prestado | − | = | sale dinero del fondo para insumos → **deuda** |
+| Devolví | + | = | se regresa con lo que se vendió → **deuda** |
+
+Los cuatro van en pares exactos, así que una captura mala se deshace con su inverso y las dos líneas quedan a
+la vista. Por eso no hay tipo "corrección": los movimientos son inmutables como las ventas.
+
+### Qué pasa al cerrar el corte
+
+Cerrar aparta lo del día automáticamente y devuelve lo que se debe **hasta donde alcance el efectivo**:
+
+1. La mitad de Primo entra a su sobre (no cobra diario, cobra el sábado).
+2. De lo que queda se apartan $45 de gasolina y $40 de gas. Si no alcanza, se aparta lo que haya.
+3. Si sigue quedando efectivo y hay deuda, se abona al sobre que más deba.
+4. Lo que sobra es de Fran. **Nunca sale negativo por llenar sobres**: llenarlos con dinero de su bolsa sería
+   sacar de la caja para meter a la caja.
+
+El corte cerrado guarda cómo quedó la caja en ese momento (`caja: { hay, deuda }`). Los cortes cerrados antes
+de que existieran los sobres traen `caja: null` y se siguen leyendo con el fondo teórico que guardaron: **no
+se recalcula el pasado**.
+
+- La gasolina y el gas son **gasto el día que se pagan**, no el día que se apartan. Apartar solo mueve
+  efectivo. Registrar la carga semanal como gasto *y* como apartado la contaría dos veces.
+- El **apartado por día** ($45 / $40) se edita abajo en la pantalla Corte. Cambiarlo no mueve nada cerrado.
+- La caja escribe solo en `refreskte:caja:v1` y `refreskte:caja-tasas:v1`. No toca ventas ni cortes.
+- Los apartados del cierre llevan **id derivado de la fecha**, así que reintentar un cierre no puede apartar
+  el doble.
 
 ## Reglas del modelo de datos
 

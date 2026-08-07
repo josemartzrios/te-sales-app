@@ -601,6 +601,26 @@ label .detalle {
   margin-bottom: 8px;
 }
 
+/* ---------- caja ---------- */
+
+/* El sobre al que le falta dinero se ve de un vistazo, sin leer los numeros. */
+.caja-corto .num,
+.caja-corto .detalle {
+  color: var(--peligro);
+}
+
+/* Cuatro acciones en dos filas: caben con el pulgar sin apretar la de junto. */
+.caja-acciones {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.caja-acciones .btn {
+  width: 100%;
+}
+
 /* ---------- listas ---------- */
 
 .fila {

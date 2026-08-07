@@ -1,7 +1,9 @@
 import type { AppEvent, Settings } from './tipos';
 import type { Borrador, CorteCerrado, Precios } from './corte';
+import type { MovimientoCaja, Tasas } from './caja';
 import { nuevoDeviceId, planRespaldo, validarAjustes, validarEvento } from './dominio';
 import { PRECIOS_INICIALES, validarBorrador, validarCorte, validarPrecios } from './corte';
+import { TASAS_INICIALES, validarMovimiento, validarTasas } from './caja';
 
 // Unico modulo que toca localStorage. Cambiar a sync remoto se hace aqui adentro.
 
@@ -14,6 +16,10 @@ const CLAVE_RESPALDO = 'rk_ventas_backup_v1';
 const CLAVE_CORTES = 'refreskte:cortes:v1';
 const CLAVE_BORRADORES = 'refreskte:cortes-borrador:v1';
 const CLAVE_PRECIOS = 'refreskte:corte-precios:v1';
+
+// Claves de la caja (sobres y movimientos). Tambien propias: no pisan nada de lo anterior.
+const CLAVE_CAJA = 'refreskte:caja:v1';
+const CLAVE_TASAS = 'refreskte:caja-tasas:v1';
 
 export type Lectura<T> = { datos: T; aviso: string | null };
 
@@ -180,4 +186,29 @@ export function leerPrecios(): Precios {
 
 export function escribirPrecios(precios: Precios): string | null {
   return escribir(CLAVE_PRECIOS, precios);
+}
+
+// ---------- caja ----------
+
+export function leerMovimientos(): Lectura<MovimientoCaja[]> {
+  return leerLista(CLAVE_CAJA, validarMovimiento, 'Movimientos de caja');
+}
+
+export function escribirMovimientos(movimientos: readonly MovimientoCaja[]): string | null {
+  return escribir(CLAVE_CAJA, movimientos);
+}
+
+export function leerTasas(): Tasas {
+  const crudo = leerCrudo(CLAVE_TASAS);
+  if (crudo === null) return { ...TASAS_INICIALES };
+  try {
+    return validarTasas(JSON.parse(crudo));
+  } catch {
+    respaldar(CLAVE_TASAS, crudo);
+    return { ...TASAS_INICIALES };
+  }
+}
+
+export function escribirTasas(tasas: Tasas): string | null {
+  return escribir(CLAVE_TASAS, tasas);
 }

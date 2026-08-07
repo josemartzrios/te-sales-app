@@ -41,18 +41,33 @@ import {
   resumenCorte,
   sinGasto,
 } from './corte';
+import type { MovimientoCaja, Sobre, Tasas, TipoMovimiento } from './caja';
+import {
+  NOMBRE_SOBRE,
+  agregarMovimientos,
+  estadoCaja,
+  movimientosDeCierre,
+  planCaja,
+  resumenCaja,
+  sobresEnDeuda,
+  validarTasas,
+} from './caja';
 import {
   escribirAjustes,
   escribirBorradores,
   escribirCortes,
   escribirEventos,
+  escribirMovimientos,
   escribirPrecios,
+  escribirTasas,
   leerAjustes,
   leerBorradores,
   leerCortes,
   leerEventos,
+  leerMovimientos,
   leerPrecios,
   leerRespaldo,
+  leerTasas,
   migrar,
 } from './almacenamiento';
 import type { DatosCargaRetro, DatosRetro, Vista } from './ui';
@@ -89,12 +104,15 @@ const lecturaAjustes = leerAjustes();
 const lecturaEventos = leerEventos();
 const lecturaCortes = leerCortes();
 const lecturaBorradores = leerBorradores();
+const lecturaMovimientos = leerMovimientos();
 
 let ajustes: Settings = lecturaAjustes.datos;
 let eventos: AppEvent[] = lecturaEventos.datos;
 let cortes: CorteCerrado[] = lecturaCortes.datos;
 let borradores: Borrador[] = lecturaBorradores.datos;
+let movimientos: MovimientoCaja[] = lecturaMovimientos.datos;
 let precios: Precios = leerPrecios();
+let tasas: Tasas = leerTasas();
 
 escribirAjustes(ajustes);
 
@@ -485,16 +503,76 @@ function montoOpcional(texto: string): number | null {
   return limpio === '' ? 0 : centavosDesde(limpio);
 }
 
-function cambiarReponer(monto: string): void {
-  const centavos = montoOpcional(monto);
-  if (centavos === null) {
-    toast('Monto a reponer invalido');
+// ---------- caja: sobres y movimientos ----------
+
+// La caja tampoco toca las ventas ni el corte: escribe solo en refreskte:caja:v1.
+
+function aplicarMovimientos(nuevos: MovimientoCaja[]): boolean {
+  const error = escribirMovimientos(nuevos);
+  if (error !== null) {
+    toast(error, 5000);
+    return false;
+  }
+  movimientos = nuevos;
+  return true;
+}
+
+/**
+ * Un movimiento capturado a mano. El signo lo pone la accion, no Fran: teclear un menos de mas
+ * a las once de la noche descuadra la caja y el error no se ve hasta el sabado.
+ */
+function moverCaja(entrada: {
+  tipo: TipoMovimiento;
+  sobre: Sobre;
+  monto: string;
+  concepto: string;
+}): void {
+  const centavos = centavosDesde(entrada.monto);
+  if (centavos === null || centavos < 1) {
+    toast('Monto invalido');
     return;
   }
-  const borrador = borradorActual();
-  // El evento 'change' tambien salta al salir del campo sin haber tocado nada.
-  if (borrador.reponerCaja === centavos) return;
-  guardarYPintar({ ...borrador, reponerCaja: centavos });
+  const concepto = entrada.concepto.trim();
+  if (concepto.length > LARGO_MAXIMO_TEXTO) {
+    toast('Concepto demasiado largo');
+    return;
+  }
+
+  const signo = entrada.tipo === 'prestamo' || entrada.tipo === 'pago' ? -1 : 1;
+  const ahora = new Date();
+  const movimiento: MovimientoCaja = {
+    id: nuevoId(ajustes.deviceId),
+    ts: isoLocal(ahora),
+    fecha: claveFecha(ahora),
+    device: ajustes.deviceId,
+    tipo: entrada.tipo,
+    sobre: entrada.sobre,
+    centavos: signo * centavos,
+    // Sin concepto no se rechaza la captura: el sobre y el tipo ya dicen casi todo.
+    concepto: concepto === '' ? NOMBRE_SOBRE[entrada.sobre] : concepto,
+  };
+
+  if (!aplicarMovimientos(agregarMovimientos(movimientos, [movimiento]))) return;
+  toast(`${importe(movimiento.centavos)} · ${NOMBRE_SOBRE[entrada.sobre]}`);
+  render();
+}
+
+function cambiarTasas(gasolina: string, gas: string): void {
+  const porGasolina = montoOpcional(gasolina);
+  const porGas = montoOpcional(gas);
+  if (porGasolina === null || porGas === null) {
+    toast('Monto de apartado invalido');
+    return;
+  }
+  const nuevas = validarTasas({ gasolina: porGasolina, gas: porGas });
+  const error = escribirTasas(nuevas);
+  if (error !== null) {
+    toast(error, 5000);
+    return;
+  }
+  tasas = nuevas;
+  toast('Apartado guardado · los cortes ya cerrados no cambian');
+  render();
 }
 
 function cambiarPrecios(calle: string, mayoreo: string): void {
@@ -518,39 +596,64 @@ function cambiarPrecios(calle: string, mayoreo: string): void {
 /**
  * Cierre irreversible. Guarda el snapshot del ingreso calculado en este momento, no una
  * referencia a las ventas: corregir manana una venta de hoy no puede mover este corte.
+ *
+ * Tambien mueve la caja: aparta lo del dia, le abona su mitad a Primo y devuelve lo prestado
+ * hasta donde alcance. Los movimientos van primero y el corte despues, porque el corte guarda
+ * como quedo la caja: al reves guardaria un snapshot de algo que todavia no pasaba.
  */
-function cerrarCorteDelDia(reponerTexto: string): void {
+function cerrarCorteDelDia(): void {
   const fecha = estado.fechaCorte;
   if (corteDeFecha(cortes, fecha) !== null) {
     toast('Ya hay un corte cerrado de esa fecha');
     render();
     return;
   }
-  const reponer = montoOpcional(reponerTexto);
-  if (reponer === null) {
-    toast('Monto a reponer invalido');
-    return;
-  }
 
-  const borrador: Borrador = { ...borradorActual(), reponerCaja: reponer };
+  const borrador = borradorActual();
   const ingreso = ingresoDeFecha(eventos, fecha, precios);
   const reparto = repartoDeBorrador(borrador, ingreso);
+  const plan = planCaja({
+    utilidad: reparto.utilidad,
+    primo: reparto.primo,
+    deuda: estadoCaja(movimientos).deuda,
+    tasas,
+    huboVentas: ingreso.total > 0,
+  });
 
   const confirmado = window.confirm(
     `Cerrar el corte del ${fechaLegible(fecha)}?\n\n` +
       `Utilidad ${importe(reparto.utilidad)}\n` +
       `Fran ${importe(reparto.fran)}\n` +
       `Primo ${importe(reparto.primo)}\n\n` +
+      `Se queda en la caja ${importe(plan.seQuedaEnCaja)}\n` +
+      `Te llevas ${importe(plan.paraFran)}\n\n` +
       'Un corte cerrado no se edita ni se borra.'
   );
   if (!confirmado) return;
 
+  const cerradoEn = isoLocal(new Date());
+  const delCierre = movimientosDeCierre({
+    fecha,
+    ts: cerradoEn,
+    device: ajustes.deviceId,
+    primo: reparto.primo,
+    plan,
+  });
+  if (plan.reponer > 0) {
+    delCierre.push(...movimientosDeReposicion(fecha, cerradoEn, plan.reponer));
+  }
+
+  const conMovimientos = agregarMovimientos(movimientos, delCierre);
+  if (!aplicarMovimientos(conMovimientos)) return;
+
+  const caja = estadoCaja(conMovimientos);
   const corte = cerrarCorte({
     borrador,
     ingreso,
     precios,
     device: ajustes.deviceId,
-    cerradoEn: isoLocal(new Date()),
+    cerradoEn,
+    caja: { hay: caja.hay, deuda: caja.deuda },
   });
   const nuevos = agregarCorte(cortes, corte);
   if (nuevos === null) {
@@ -567,8 +670,34 @@ function cerrarCorteDelDia(reponerTexto: string): void {
   // El borrador ya cumplio: el registro bueno es el corte cerrado. Si esto falla no importa,
   // la vista ya lee del cerrado.
   aplicarBorradores(guardarBorrador(borradores, borradorVacio(fecha)));
-  toast('Corte cerrado', 2500);
+  toast(`Corte cerrado · te llevas ${importe(plan.paraFran)}`, 3500);
   render();
+}
+
+/**
+ * Reparte lo que se devuelve entre los sobres que estan cortos, empezando por el que mas debe.
+ * Un solo movimiento por el total no serviria: la deuda vive por sobre, y hay que saber si lo
+ * que falta es de la gasolina o del fondo.
+ */
+function movimientosDeReposicion(fecha: string, ts: string, total: number): MovimientoCaja[] {
+  const salida: MovimientoCaja[] = [];
+  let restante = total;
+  for (const s of sobresEnDeuda(estadoCaja(movimientos))) {
+    if (restante <= 0) break;
+    const abono = Math.min(s.deuda, restante);
+    restante -= abono;
+    salida.push({
+      id: `caja-${fecha}-reposicion-${s.sobre}`,
+      ts,
+      fecha,
+      device: ajustes.deviceId,
+      tipo: 'reposicion',
+      sobre: s.sobre,
+      centavos: abono,
+      concepto: `Devuelto el ${fechaLegible(fecha)}`,
+    });
+  }
+  return salida;
 }
 
 async function copiarCorte(): Promise<void> {
@@ -632,16 +761,21 @@ function vistaActual(): HTMLElement {
         precios,
         borrador: borradorDe(borradores, estado.fechaCorte),
         cerrado: corteDeFecha(cortes, estado.fechaCorte),
+        caja: estadoCaja(movimientos),
+        movimientos,
+        tasas,
         alCambiarFecha: (f) => {
           estado.fechaCorte = f;
           render();
         },
         alAgregarGasto: agregarGasto,
         alQuitarGasto: quitarGasto,
-        alCambiarReponer: cambiarReponer,
+        alMoverCaja: moverCaja,
+        alCambiarTasas: cambiarTasas,
         alCambiarPrecios: cambiarPrecios,
         alCerrar: cerrarCorteDelDia,
         alCopiar: () => void copiarCorte(),
+        alCopiarCaja: () => void compartirTexto(resumenCaja(estadoCaja(movimientos)), 'Caja copiada'),
       });
     case 'stats':
       return vistaStats({
@@ -704,6 +838,7 @@ for (const aviso of [
   lecturaEventos.aviso,
   lecturaCortes.aviso,
   lecturaBorradores.aviso,
+  lecturaMovimientos.aviso,
 ]) {
   if (aviso !== null) toast(aviso, 6000);
 }
