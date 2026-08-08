@@ -1,6 +1,6 @@
 import './estilos.css';
 import type { AppEvent, ArchivoExport, Canal, Settings, Vendedor } from './tipos';
-import type { Rango } from './dominio';
+import type { CorreccionLugar, Rango } from './dominio';
 import {
   LARGO_MAXIMO_TEXTO,
   NOMBRE_APP,
@@ -13,16 +13,21 @@ import {
   crearTurno,
   crearVenta,
   eventosDeArchivo,
+  eventosDeHora,
   fechaLegible,
   hieleraDe,
+  horaMinuto,
   isoDesdeFechaYHora,
   isoLocal,
   mezclar,
+  moverVenta,
   nuevoId,
+  planCorreccionLugar,
   puedeAgregarPunto,
   quitarPunto,
   resumenTexto,
   turnoActual,
+  ultimaVentaActiva,
 } from './dominio';
 import type { Borrador, CorteCerrado, Precios } from './corte';
 import {
@@ -41,15 +46,27 @@ import {
   resumenCorte,
   sinGasto,
 } from './corte';
-import type { MovimientoCaja, Sobre, Tasas, TipoMovimiento } from './caja';
+import type { MovimientoCaja, Sobre, Tasas } from './caja';
 import {
   NOMBRE_SOBRE,
   agregarMovimientos,
+  arquear,
+  borrarMovimiento,
+  cajaParaEsperado,
+  editarMovimiento,
   estadoCaja,
+  movimientoDeArqueo,
+  movimientoDeCobro,
   movimientosDeCierre,
+  movimientosDeGasto,
+  movimientosDeSemana,
+  origenDelGasto,
   planCaja,
+  planSemana,
   resumenCaja,
-  sobresEnDeuda,
+  sellarMovimientos,
+  sinMovimientosDeGasto,
+  tipoDeMovimiento,
   validarTasas,
 } from './caja';
 import {
@@ -70,11 +87,13 @@ import {
   leerTasas,
   migrar,
 } from './almacenamiento';
-import type { DatosCargaRetro, DatosRetro, Vista } from './ui';
+import type { CapturaCaja, DatosCargaRetro, DatosRetro, Vista } from './ui';
 import {
   abrirCarga,
   abrirCargaRetro,
+  abrirCorreccionLugar,
   abrirMayoreo,
+  abrirMoverVenta,
   abrirRetro,
   abrirTraspaso,
   destacarHielera,
@@ -83,6 +102,7 @@ import {
   pintarNav,
   toast,
   vistaAjustes,
+  vistaCaja,
   vistaCorte,
   vistaHoy,
   vistaStats,
@@ -118,6 +138,11 @@ escribirAjustes(ajustes);
 
 const estado: {
   vista: Vista;
+  /**
+   * De donde se entro a Stats o Ajustes. Esas dos no estan en la barra de abajo, asi que su
+   * "Volver" tiene que devolver al sitio del que se vino, no a uno fijo.
+   */
+  vistaPrevia: Vista;
   vendedor: Vendedor;
   fecha: string;
   fechaCorte: string;
@@ -126,6 +151,7 @@ const estado: {
   vendedorStats: Vendedor | 'todos';
 } = {
   vista: 'vender',
+  vistaPrevia: 'vender',
   vendedor: ajustes.defaultVendor,
   fecha: claveFecha(new Date()),
   fechaCorte: claveFecha(new Date()),
@@ -133,6 +159,25 @@ const estado: {
   canal: 'calle',
   vendedorStats: 'todos',
 };
+
+const SECUNDARIAS: readonly Vista[] = ['stats', 'ajustes'];
+
+/**
+ * El unico camino para cambiar de pantalla: la barra de abajo, el menu "⋯", el "Volver" y los
+ * atajos entre pantallas pasan todos por aqui, asi que las fechas se refrescan y el scroll vuelve
+ * arriba sin que cada sitio tenga que acordarse.
+ */
+function irAVista(v: Vista): void {
+  if (SECUNDARIAS.includes(v) && !SECUNDARIAS.includes(estado.vista)) {
+    estado.vistaPrevia = estado.vista;
+  }
+  // Entrar a Hoy o a Corte es "ver el dia de hoy": si se quedo en una fecha vieja, se descarta.
+  if (v === 'hoy') estado.fecha = claveFecha(new Date());
+  if (v === 'corte') estado.fechaCorte = claveFecha(new Date());
+  estado.vista = v;
+  render();
+  window.scrollTo(0, 0);
+}
 
 // ---------- escritura ----------
 
@@ -225,6 +270,138 @@ function marcarLugar(punto: string): void {
   if (!aplicarEventos([...eventos, ...turnos])) return;
   toast(`${llegan.join(' y ')} en ${punto}`);
   render();
+}
+
+/**
+ * La captura principal: "llegamos a la Plazuela a las cinco y se fueron doce". Escribe el turno
+ * de los dos a esa hora y una venta por vendedor con lo suyo.
+ */
+function registrarHora(datos: {
+  punto: string;
+  hora: string;
+  piezas: Record<Vendedor, number>;
+}): void {
+  const hoy = claveFecha(new Date());
+  const ts = isoDesdeFechaYHora(hoy, datos.hora);
+  if (ts === null) {
+    toast('Hora invalida');
+    return;
+  }
+  for (const vendedor of VENDEDORES) {
+    const qty = datos.piezas[vendedor];
+    if (!Number.isInteger(qty) || qty < 0) {
+      toast('Cantidad invalida');
+      return;
+    }
+  }
+
+  const nuevos = eventosDeHora(eventos, {
+    ts,
+    fecha: hoy,
+    point: datos.punto,
+    device: ajustes.deviceId,
+    piezas: datos.piezas,
+  });
+  if (nuevos.length === 0) {
+    toast('Nada que registrar');
+    return;
+  }
+  if (!aplicarEventos([...eventos, ...nuevos])) return;
+
+  const total = VENDEDORES.reduce((suma, v) => suma + (datos.piezas[v] ?? 0), 0);
+  toast(
+    total === 0
+      ? `${datos.punto} · ${datos.hora}`
+      : `${datos.punto} ${datos.hora} · ${total} pieza${total === 1 ? '' : 's'}`
+  );
+  render();
+  destacarHielera();
+}
+
+// ---------- correccion de lugar ----------
+
+/**
+ * La venta ocurrio, el lugar no: se anula y se vuelve a escribir en el punto correcto con su
+ * misma hora. No mueve dinero —el corte suma piezas por canal— asi que tampoco se pregunta nada:
+ * el historico guarda la vieja tachada y la nueva marcada MOVIDA.
+ */
+function moverVentaDeLugar(id: string, punto: string): void {
+  const movida = moverVenta(eventos, id, punto, ajustes.deviceId, isoLocal(new Date()));
+  if (movida === null) {
+    toast('Esa venta ya no se puede mover');
+    render();
+    return;
+  }
+  if (!aplicarEventos([...eventos, movida.anulacion, movida.venta])) return;
+  toast(`Venta movida a ${punto}`);
+  render();
+}
+
+function pedirLugarDeVenta(id: string): void {
+  const venta = eventos.find((e) => e.id === id);
+  if (venta === undefined || venta.type !== 'sale') return;
+  abrirMoverVenta(ajustes.points, venta.point, (punto) => moverVentaDeLugar(id, punto));
+}
+
+/** Lo que haria la correccion, sin escribir nada: el dialogo lo usa para el resumen en vivo. */
+function planDeCorreccion(fecha: string, punto: string, hora: string): CorreccionLugar | null {
+  const desde = isoDesdeFechaYHora(fecha, hora);
+  if (desde === null) return null;
+  return planCorreccionLugar(eventos, {
+    desde,
+    punto,
+    device: ajustes.deviceId,
+    ahora: isoLocal(new Date()),
+  });
+}
+
+function corregirLugar(fecha: string, punto: string, hora: string): void {
+  const plan = planDeCorreccion(fecha, punto, hora);
+  if (plan === null) {
+    toast('Con esos datos no hay nada que corregir');
+    return;
+  }
+  if (!aplicarEventos([...eventos, ...plan.eventos])) return;
+  toast(
+    plan.piezas === 0
+      ? `${plan.vendedores.join(' y ')} en ${punto} desde ${hora}`
+      : `${plan.piezas} piezas pasan a ${punto}`,
+    2500
+  );
+  // Sin pulso en la hielera: la pieza sigue siendo del mismo vendedor, solo cambio de lugar.
+  render();
+}
+
+type Atajo = { etiqueta: string; pie: string; hora: string };
+
+/**
+ * Los dos extremos de la correccion salen de atajo, y se nombran por lo que hacen y no por la
+ * hora que ponen: "solo la ultima venta" es el toque suelto en el lugar de al lado, y "todo el
+ * turno" es haber tocado mal el lugar desde que llegaron. Lo de en medio —me movi a las 17:20 y
+ * vendi tres— se teclea, que es justo cuando el resumen de piezas hace falta.
+ */
+function pedirCorreccionLugar(fecha: string): void {
+  const turno = turnoActual(eventos, estado.vendedor, fecha);
+  const ultima =
+    turno === null ? null : ultimaVentaActiva(eventos, turno.point, fecha, estado.vendedor);
+
+  const atajos = [
+    ultima === null
+      ? null
+      : { etiqueta: 'Solo la última venta', pie: horaMinuto(ultima.ts), hora: horaMinuto(ultima.ts) },
+    turno === null
+      ? null
+      : { etiqueta: 'Todo el turno', pie: `desde ${horaMinuto(turno.ts)}`, hora: horaMinuto(turno.ts) },
+  ].filter((a): a is Atajo => a !== null);
+
+  abrirCorreccionLugar({
+    puntos: ajustes.points,
+    actual: turno?.point ?? null,
+    hora: atajos[0]?.hora ?? horaMinuto(isoLocal(new Date())),
+    atajos,
+    alPrevisualizar: (punto, hora) => planDeCorreccion(fecha, punto, hora),
+    alConfirmar: (punto, hora) => corregirLugar(fecha, punto, hora),
+  });
 }
 
 /**
@@ -489,12 +666,42 @@ function agregarGasto(concepto: string, monto: string): void {
     return;
   }
   const linea = nuevaLinea(limpio, centavos, nuevoId(ajustes.deviceId));
+
+  // El efectivo sale del fondo y, si no alcanza, de lo apartado para gasolina. Se escribe en la
+  // caja antes que el gasto: si la caja no se pudo guardar, el gasto tampoco se captura y las
+  // dos libretas no se separan.
+  const ahora = new Date();
+  const delGasto = movimientosDeGasto({
+    gastoId: linea.id,
+    concepto: limpio,
+    ts: isoLocal(ahora),
+    fecha: claveFecha(ahora),
+    device: ajustes.deviceId,
+    origen: origenDelGasto(estadoCaja(movimientos), centavos),
+  });
+  if (delGasto.length > 0 && !aplicarMovimientos(agregarMovimientos(movimientos, delGasto))) {
+    return;
+  }
+
   if (!guardarYPintar(conGasto(borradorActual(), linea))) return;
+
+  const deLaCaja = delGasto.reduce((total, m) => total - m.centavos, 0);
+  if (deLaCaja < centavos) {
+    // La caja no tenia con que cubrirlo entero: el resto salio de la venta del dia o de una
+    // bolsa. El gasto cuenta completo igual; solo no se inventa efectivo que la caja no tuvo.
+    toast(`Gasto capturado · de la caja salieron ${importe(deLaCaja)}`, 3500);
+  }
   enfocarGasto();
 }
 
-/** El borrador es editable hasta que se cierra: borrar una linea mal capturada no pregunta nada. */
+/**
+ * El borrador es editable hasta que se cierra: borrar una linea mal capturada no pregunta nada.
+ * Se lleva con ella el efectivo que habia sacado de la caja, o el fondo quedaria corto por un
+ * gasto que ya no existe.
+ */
 function quitarGasto(id: string): void {
+  const sinSuEfectivo = sinMovimientosDeGasto(movimientos, id);
+  if (sinSuEfectivo.length !== movimientos.length && !aplicarMovimientos(sinSuEfectivo)) return;
   guardarYPintar(sinGasto(borradorActual(), id));
 }
 
@@ -518,42 +725,170 @@ function aplicarMovimientos(nuevos: MovimientoCaja[]): boolean {
 }
 
 /**
- * Un movimiento capturado a mano. El signo lo pone la accion, no Fran: teclear un menos de mas
- * a las once de la noche descuadra la caja y el error no se ve hasta el sabado.
+ * Lee los campos crudos de la pantalla. Devuelve null y avisa cuando algo no cuadra, para que
+ * captura y correccion validen igual sin repetir los mensajes.
  */
-function moverCaja(entrada: {
-  tipo: TipoMovimiento;
-  sobre: Sobre;
-  monto: string;
-  concepto: string;
-}): void {
-  const centavos = centavosDesde(entrada.monto);
-  if (centavos === null || centavos < 1) {
+function leerCaptura(
+  captura: CapturaCaja
+): { centavos: number; concepto: string } | null {
+  const monto = centavosDesde(captura.monto);
+  if (monto === null || monto < 1) {
     toast('Monto invalido');
-    return;
+    return null;
   }
-  const concepto = entrada.concepto.trim();
+  const concepto = captura.concepto.trim();
   if (concepto.length > LARGO_MAXIMO_TEXTO) {
     toast('Concepto demasiado largo');
-    return;
+    return null;
   }
+  return {
+    centavos: captura.signo * monto,
+    // Sin concepto no se rechaza la captura: el sobre ya dice casi todo.
+    concepto: concepto === '' ? NOMBRE_SOBRE[captura.sobre] : concepto,
+  };
+}
 
-  const signo = entrada.tipo === 'prestamo' || entrada.tipo === 'pago' ? -1 : 1;
+/**
+ * Un movimiento capturado a mano. Nace abierto: se puede corregir hasta que un cierre lo selle.
+ * El signo lo pone el boton y el tipo lo deduce el dominio; Fran solo teclea cuanto y de que.
+ */
+function moverCaja(captura: CapturaCaja): void {
+  const datos = leerCaptura(captura);
+  if (datos === null) return;
+
   const ahora = new Date();
   const movimiento: MovimientoCaja = {
     id: nuevoId(ajustes.deviceId),
     ts: isoLocal(ahora),
     fecha: claveFecha(ahora),
     device: ajustes.deviceId,
-    tipo: entrada.tipo,
-    sobre: entrada.sobre,
-    centavos: signo * centavos,
-    // Sin concepto no se rechaza la captura: el sobre y el tipo ya dicen casi todo.
-    concepto: concepto === '' ? NOMBRE_SOBRE[entrada.sobre] : concepto,
+    tipo: tipoDeMovimiento(captura.signo),
+    sobre: captura.sobre,
+    centavos: datos.centavos,
+    concepto: datos.concepto,
+    abierto: true,
   };
 
   if (!aplicarMovimientos(agregarMovimientos(movimientos, [movimiento]))) return;
-  toast(`${importe(movimiento.centavos)} · ${NOMBRE_SOBRE[entrada.sobre]}`);
+  toast(`${importe(movimiento.centavos)} · ${NOMBRE_SOBRE[captura.sobre]}`);
+  render();
+}
+
+/** Corregir un movimiento todavia abierto. El dominio rechaza los sellados; aqui solo se avisa. */
+function corregirCaja(id: string, captura: CapturaCaja): void {
+  const datos = leerCaptura(captura);
+  if (datos === null) return;
+
+  const nuevos = editarMovimiento(movimientos, id, {
+    sobre: captura.sobre,
+    centavos: datos.centavos,
+    concepto: datos.concepto,
+  });
+  if (nuevos === null) {
+    toast('Ese movimiento ya quedó sellado por un corte');
+    render();
+    return;
+  }
+  if (!aplicarMovimientos(nuevos)) return;
+  toast('Movimiento corregido');
+  render();
+}
+
+function borrarDeCaja(id: string): void {
+  const movimiento = movimientos.find((m) => m.id === id);
+  if (movimiento === undefined) return;
+  const confirmado = window.confirm(
+    `Borrar ${importe(movimiento.centavos)} de ${NOMBRE_SOBRE[movimiento.sobre]}?\n` +
+      `${movimiento.concepto}`
+  );
+  if (!confirmado) return;
+
+  const nuevos = borrarMovimiento(movimientos, id);
+  if (nuevos === null) {
+    toast('Ese movimiento ya quedó sellado por un corte');
+    render();
+    return;
+  }
+  if (!aplicarMovimientos(nuevos)) return;
+  toast('Movimiento borrado');
+  render();
+}
+
+/**
+ * Contar el bulto contra el libro. El ajuste no se aplica solo: se ensena la diferencia y Fran
+ * decide, porque un faltante puede ser un movimiento que falto capturar y no dinero perdido.
+ */
+function arquearCaja(contado: string): void {
+  const centavos = centavosDesde(contado);
+  if (centavos === null || centavos < 0) {
+    toast('Monto invalido');
+    return;
+  }
+
+  const resultado = arquear(estadoCaja(movimientos), centavos);
+  if (resultado.diferencia === 0) {
+    toast('La caja cuadra');
+    return;
+  }
+
+  const falta = resultado.diferencia < 0;
+  const confirmado = window.confirm(
+    `La caja dice ${importe(resultado.calculado)} y contaste ${importe(resultado.contado)}.\n\n` +
+      `${falta ? 'Faltan' : 'Sobran'} ${importe(Math.abs(resultado.diferencia))}.\n\n` +
+      `Cuadrar con un ajuste al fondo? ${
+        falta ? 'Queda como deuda a la caja.' : 'Cuenta como dinero devuelto.'
+      }`
+  );
+  if (!confirmado) return;
+
+  const ahora = new Date();
+  const movimiento = movimientoDeArqueo({
+    id: nuevoId(ajustes.deviceId),
+    ts: isoLocal(ahora),
+    fecha: claveFecha(ahora),
+    device: ajustes.deviceId,
+    // El fondo es el sobre de trabajo: de ahi salen los gastos, y ahi es donde un descuadre
+    // aparece casi siempre.
+    sobre: 'fondo',
+    diferencia: resultado.diferencia,
+  });
+  if (movimiento === null) return;
+  if (!aplicarMovimientos(agregarMovimientos(movimientos, [movimiento]))) return;
+  toast(`Caja cuadrada · ${importe(resultado.diferencia)}`);
+  render();
+}
+
+/**
+ * El domingo: se paga lo apartado y los sobres quedan en cero. No toca la utilidad ni el corte,
+ * solo saca de la caja el efectivo que ya tenia dueno.
+ */
+function cerrarSemana(): void {
+  const plan = planSemana(estadoCaja(movimientos));
+  if (plan.total === 0) {
+    toast('No hay nada apartado que pagar');
+    return;
+  }
+
+  const ahora = new Date();
+  const fecha = claveFecha(ahora);
+  const detalle = plan.pagos
+    .map((pago) => `${NOMBRE_SOBRE[pago.sobre]} ${importe(pago.centavos)}`)
+    .join('\n');
+  const confirmado = window.confirm(
+    `Cerrar la semana del ${fechaLegible(fecha)}?\n\n${detalle}\n\n` +
+      `Total ${importe(plan.total)}\n\n` +
+      'Los sobres quedan en cero. No se puede deshacer.'
+  );
+  if (!confirmado) return;
+
+  const delCierre = movimientosDeSemana({
+    fecha,
+    ts: isoLocal(ahora),
+    device: ajustes.deviceId,
+    plan,
+  });
+  if (!aplicarMovimientos(agregarMovimientos(movimientos, delCierre))) return;
+  toast(`Semana cerrada · ${importe(plan.total)}`, 3500);
   render();
 }
 
@@ -614,7 +949,6 @@ function cerrarCorteDelDia(): void {
   const reparto = repartoDeBorrador(borrador, ingreso);
   const plan = planCaja({
     utilidad: reparto.utilidad,
-    primo: reparto.primo,
     deuda: estadoCaja(movimientos).deuda,
     tasas,
     huboVentas: ingreso.total > 0,
@@ -623,11 +957,11 @@ function cerrarCorteDelDia(): void {
   const confirmado = window.confirm(
     `Cerrar el corte del ${fechaLegible(fecha)}?\n\n` +
       `Utilidad ${importe(reparto.utilidad)}\n` +
-      `Fran ${importe(reparto.fran)}\n` +
-      `Primo ${importe(reparto.primo)}\n\n` +
-      `Se queda en la caja ${importe(plan.seQuedaEnCaja)}\n` +
-      `Te llevas ${importe(plan.paraFran)}\n\n` +
-      'Un corte cerrado no se edita ni se borra.'
+      `Se aparta ${importe(plan.totalApartado)}\n` +
+      `Se reparte ${importe(plan.repartible)}\n\n` +
+      `Tuyo ${importe(plan.fran)}\n` +
+      `Primo ${importe(plan.primo)}\n\n` +
+      'Cada mitad se va a su sobre. Un corte cerrado no se edita ni se borra.'
   );
   if (!confirmado) return;
 
@@ -636,14 +970,12 @@ function cerrarCorteDelDia(): void {
     fecha,
     ts: cerradoEn,
     device: ajustes.deviceId,
-    primo: reparto.primo,
     plan,
   });
-  if (plan.reponer > 0) {
-    delCierre.push(...movimientosDeReposicion(fecha, cerradoEn, plan.reponer));
-  }
 
-  const conMovimientos = agregarMovimientos(movimientos, delCierre);
+  // Sellar va en el mismo guardado que el apartado: el corte guarda como quedo la caja, y un
+  // movimiento que siguiera editable despues desmentiria ese registro inmutable.
+  const conMovimientos = sellarMovimientos(agregarMovimientos(movimientos, delCierre));
   if (!aplicarMovimientos(conMovimientos)) return;
 
   const caja = estadoCaja(conMovimientos);
@@ -653,6 +985,7 @@ function cerrarCorteDelDia(): void {
     precios,
     device: ajustes.deviceId,
     cerradoEn,
+    apartado: plan.totalApartado,
     caja: { hay: caja.hay, deuda: caja.deuda },
   });
   const nuevos = agregarCorte(cortes, corte);
@@ -670,34 +1003,39 @@ function cerrarCorteDelDia(): void {
   // El borrador ya cumplio: el registro bueno es el corte cerrado. Si esto falla no importa,
   // la vista ya lee del cerrado.
   aplicarBorradores(guardarBorrador(borradores, borradorVacio(fecha)));
-  toast(`Corte cerrado · te llevas ${importe(plan.paraFran)}`, 3500);
+  toast(`Corte cerrado · te tocan ${importe(plan.fran)}`, 3500);
   render();
 }
 
 /**
- * Reparte lo que se devuelve entre los sobres que estan cortos, empezando por el que mas debe.
- * Un solo movimiento por el total no serviria: la deuda vive por sobre, y hay que saber si lo
- * que falta es de la gasolina o del fondo.
+ * Sacar de tu sobre lo que ya tienes ganado. Es un pago, no un prestamo: ese dinero ya era tuyo
+ * y cobrarlo no deja deuda con la caja.
  */
-function movimientosDeReposicion(fecha: string, ts: string, total: number): MovimientoCaja[] {
-  const salida: MovimientoCaja[] = [];
-  let restante = total;
-  for (const s of sobresEnDeuda(estadoCaja(movimientos))) {
-    if (restante <= 0) break;
-    const abono = Math.min(s.deuda, restante);
-    restante -= abono;
-    salida.push({
-      id: `caja-${fecha}-reposicion-${s.sobre}`,
-      ts,
-      fecha,
-      device: ajustes.deviceId,
-      tipo: 'reposicion',
-      sobre: s.sobre,
-      centavos: abono,
-      concepto: `Devuelto el ${fechaLegible(fecha)}`,
-    });
+function cobrarSobre(sobre: Sobre): void {
+  const saldo = estadoCaja(movimientos).sobres.find((s) => s.sobre === sobre);
+  if (saldo === undefined || saldo.hay <= 0) {
+    toast('No hay nada acumulado que cobrar');
+    return;
   }
-  return salida;
+
+  const confirmado = window.confirm(
+    `Cobrar ${importe(saldo.hay)} de ${NOMBRE_SOBRE[sobre]}?\n\nEse dinero sale de la caja.`
+  );
+  if (!confirmado) return;
+
+  const ahora = new Date();
+  const cobro = movimientoDeCobro({
+    id: nuevoId(ajustes.deviceId),
+    ts: isoLocal(ahora),
+    fecha: claveFecha(ahora),
+    device: ajustes.deviceId,
+    sobre,
+    centavos: saldo.hay,
+  });
+  if (cobro === null) return;
+  if (!aplicarMovimientos(agregarMovimientos(movimientos, [cobro]))) return;
+  toast(`Cobrado ${importe(saldo.hay)}`);
+  render();
 }
 
 async function copiarCorte(): Promise<void> {
@@ -727,6 +1065,7 @@ function vistaActual(): HTMLElement {
         alVender: (punto, qty) =>
           registrarVenta({ punto, canal: 'calle', qty, aviso: `+${qty} · ${punto}` }),
         alRestar: restarUna,
+        alCorregirLugar: () => pedirCorreccionLugar(hoy),
         alAbrirMayoreo: () =>
           abrirMayoreo(ajustes.points, (punto, qty) =>
             registrarVenta({ punto, canal: 'mayoreo', qty, aviso: `Mayoreo ${punto} ×${qty}` })
@@ -739,6 +1078,8 @@ function vistaActual(): HTMLElement {
             (quien) => hieleraDe(eventos, quien, hoy),
             registrarTraspaso
           ),
+        alRegistrarHora: registrarHora,
+        alIrA: irAVista,
       });
     case 'hoy':
       return vistaHoy({
@@ -751,8 +1092,28 @@ function vistaActual(): HTMLElement {
           render();
         },
         alAnular: anular,
+        alMoverVenta: pedirLugarDeVenta,
+        alCorregirLugar: () => pedirCorreccionLugar(estado.fecha),
         alAbrirRetro: () => abrirRetro(ajustes, estado.fecha, capturarRetro),
         alAbrirCargaRetro: () => abrirCargaRetro(ajustes, estado.fecha, capturarCargaRetro),
+        alIrA: irAVista,
+      });
+    case 'caja':
+      return vistaCaja({
+        caja: estadoCaja(movimientos),
+        movimientos,
+        tasas,
+        semana: planSemana(estadoCaja(movimientos)),
+        alMover: moverCaja,
+        alEditar: corregirCaja,
+        alBorrar: borrarDeCaja,
+        alArquear: arquearCaja,
+        alCerrarSemana: cerrarSemana,
+        alCobrar: cobrarSobre,
+        alCambiarTasas: cambiarTasas,
+        alCopiar: () =>
+          void compartirTexto(resumenCaja(estadoCaja(movimientos)), 'Caja copiada'),
+        alIrA: irAVista,
       });
     case 'corte':
       return vistaCorte({
@@ -762,7 +1123,7 @@ function vistaActual(): HTMLElement {
         borrador: borradorDe(borradores, estado.fechaCorte),
         cerrado: corteDeFecha(cortes, estado.fechaCorte),
         caja: estadoCaja(movimientos),
-        movimientos,
+        cajaAlAbrir: cajaParaEsperado(movimientos, estado.fechaCorte),
         tasas,
         alCambiarFecha: (f) => {
           estado.fechaCorte = f;
@@ -770,12 +1131,11 @@ function vistaActual(): HTMLElement {
         },
         alAgregarGasto: agregarGasto,
         alQuitarGasto: quitarGasto,
-        alMoverCaja: moverCaja,
-        alCambiarTasas: cambiarTasas,
         alCambiarPrecios: cambiarPrecios,
         alCerrar: cerrarCorteDelDia,
         alCopiar: () => void copiarCorte(),
-        alCopiarCaja: () => void compartirTexto(resumenCaja(estadoCaja(movimientos)), 'Caja copiada'),
+        alVerCaja: () => irAVista('caja'),
+        alIrA: irAVista,
       });
     case 'stats':
       return vistaStats({
@@ -797,6 +1157,7 @@ function vistaActual(): HTMLElement {
           estado.vendedorStats = v;
           render();
         },
+        alVolver: () => irAVista(estado.vistaPrevia),
       });
     case 'ajustes':
       return vistaAjustes({
@@ -815,6 +1176,7 @@ function vistaActual(): HTMLElement {
         alExportar: exportar,
         alCompartir: () => void compartirResumen(),
         alImportar: (archivo) => void importar(archivo),
+        alVolver: () => irAVista(estado.vistaPrevia),
       });
   }
 }
@@ -822,13 +1184,7 @@ function vistaActual(): HTMLElement {
 function render(): void {
   limpiar(app);
   app.appendChild(vistaActual());
-  pintarNav(nav, estado.vista, (v) => {
-    estado.vista = v;
-    if (v === 'hoy') estado.fecha = claveFecha(new Date());
-    if (v === 'corte') estado.fechaCorte = claveFecha(new Date());
-    render();
-    window.scrollTo(0, 0);
-  });
+  pintarNav(nav, estado.vista, irAVista);
 }
 
 render();

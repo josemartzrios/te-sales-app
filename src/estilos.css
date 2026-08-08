@@ -1,10 +1,39 @@
+/* Todo el color pasa por estas variables: el tema oscuro solo las reescribe, y ninguna regla de
+   mas abajo tiene que saber en que tema esta. */
 :root {
+  /* Que los controles nativos (date, time, select) se pinten en el tema que toca. */
+  color-scheme: light dark;
+
   --fondo: #ffffff;
   --texto: #111111;
-  --secundario: #8a8a8a;
-  --linea: #eaeaea;
+  /* #8a8a8a sobre blanco daba 3.1:1, por debajo del minimo legible para texto de 13px. */
+  --secundario: #6b6b6b;
+  --linea: #e4e4e4;
   --acento: #0d7a5f;
+  /* Lo que se escribe ENCIMA del acento: en claro es blanco, en oscuro tiene que ser oscuro. */
+  --sobre-acento: #ffffff;
   --peligro: #c0392b;
+  --velo: rgba(17, 17, 17, 0.35);
+  /* El toast va siempre al reves del fondo, para que se despegue de la pantalla. */
+  --toast-fondo: #111111;
+  --toast-texto: #ffffff;
+}
+
+/* Se vende de tarde y de noche, con el telefono en la mano: en la calle a las 9 pm una pantalla
+   de fondo blanco puro deslumbra y tapa lo que se acaba de registrar. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fondo: #121212;
+    --texto: #f0f0f0;
+    --secundario: #9e9e9e;
+    --linea: #2e2e2e;
+    --acento: #34c48f;
+    --sobre-acento: #06231a;
+    --peligro: #ff6f61;
+    --velo: rgba(0, 0, 0, 0.6);
+    --toast-fondo: #f0f0f0;
+    --toast-texto: #121212;
+  }
 }
 
 * {
@@ -84,6 +113,28 @@ h3 {
   margin-bottom: 16px;
 }
 
+/* El dato de cabecera y el "..." viajan juntos pegados al borde derecho, y el dato se encoge
+   antes que el boton: el boton tiene un tamano de pulgar que no se negocia. */
+.encabezado-fin {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.encabezado-fin .detalle {
+  text-align: right;
+}
+
+.encabezado-nota {
+  margin: -8px 0 16px;
+}
+
+.encabezado-secundario .btn-volver {
+  display: block;
+  margin-bottom: 4px;
+}
+
 .bloque {
   margin-bottom: 28px;
 }
@@ -117,7 +168,7 @@ button:active {
   width: 100%;
   min-height: 72px;
   background: var(--acento);
-  color: #ffffff;
+  color: var(--sobre-acento);
   border-radius: 2px;
   font-size: 20px;
   font-weight: 600;
@@ -214,7 +265,7 @@ label .detalle {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   margin: -16px -16px 16px;
   padding: 8px 16px;
   background: var(--fondo);
@@ -242,14 +293,14 @@ label .detalle {
 }
 
 .seg.activo {
-  color: #ffffff;
+  color: var(--sobre-acento);
   background: var(--acento);
 }
 
 .barra-datos {
   display: flex;
   align-items: baseline;
-  gap: 14px;
+  gap: 12px;
 }
 
 .barra-dato {
@@ -386,6 +437,13 @@ label .detalle {
   margin: -4px 0 8px;
 }
 
+/* Corregir el lugar va debajo de los botones de venta, discreto: se usa poco y no compite. */
+.punto-correccion {
+  display: flex;
+  justify-content: center;
+  margin-top: 4px;
+}
+
 .conteo {
   font-size: 20px;
   font-weight: 600;
@@ -409,6 +467,25 @@ label .detalle {
 
 .btn-chico.acento {
   color: var(--acento);
+}
+
+/* Atajo de hora: arriba lo que hace, abajo desde cuando. El nombre solo no dice el efecto, y
+   la hora sola obliga a deducirlo — en la calle nadie deduce nada. */
+.atajo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 54px;
+  padding: 6px 8px;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.atajo .detalle {
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .btn-chico.peligro {
@@ -439,6 +516,42 @@ label .detalle {
   color: var(--secundario);
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* ---------- menu "mas" ---------- */
+
+/* Discreto de color y grande de area: se toca poco, pero cuando se toca es con el pulgar. */
+.btn-mas {
+  flex: 0 0 auto;
+  min-width: 40px;
+  min-height: 40px;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--secundario);
+  align-self: center;
+}
+
+.menu-opcion {
+  display: block;
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 14px;
+  border: 1px solid var(--linea);
+  border-radius: 2px;
+  background: var(--fondo);
+  color: var(--texto);
+  text-align: left;
+}
+
+.menu-titulo {
+  display: block;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.menu-opcion .detalle {
+  display: block;
+  margin-top: 2px;
 }
 
 /* ---------- tablero del dia ---------- */
@@ -609,16 +722,22 @@ label .detalle {
   color: var(--peligro);
 }
 
-/* Cuatro acciones en dos filas: caben con el pulgar sin apretar la de junto. */
+/* Entro y salio, uno junto al otro: se aprietan con el pulgar sin darle a la de al lado. */
 .caja-acciones {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 16px;
 }
 
 .caja-acciones .btn {
   width: 100%;
+}
+
+/* La direccion se ve antes de leer la etiqueta: es lo unico que se puede apretar al reves. */
+.btn.caja-sale {
+  color: var(--peligro);
+  border-color: var(--peligro);
 }
 
 /* ---------- listas ---------- */
@@ -638,6 +757,13 @@ label .detalle {
   gap: 8px;
   flex-wrap: wrap;
   min-width: 0;
+}
+
+/* Los botones del renglon no se encogen: el que se aprieta con el pulgar es este. */
+.fila-acciones {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
 }
 
 .anulada .fila-datos {
@@ -731,8 +857,10 @@ label .detalle {
   justify-content: center;
   font-size: 13px;
   font-weight: 600;
-  /* El acento pinta el fondo segun que tan fuerte fue esa hora en ese lugar. */
-  background: color-mix(in srgb, var(--acento) calc(var(--intensidad, 0) * 100%), transparent);
+  /* El acento pinta el fondo segun que tan fuerte fue esa hora en ese lugar. Tope al 45%: al
+     100% la celda mas fuerte quedaba del color del acento y su numero dejaba de leerse encima,
+     justo en la celda que mas se mira. */
+  background: color-mix(in srgb, var(--acento) calc(var(--intensidad, 0) * 45%), transparent);
 }
 
 .matriz-celda.vacia {
@@ -767,16 +895,29 @@ label .detalle {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* Cuatro destinos: la etiqueta cabe entera y el area de toque es ancha de verdad. */
 .nav-btn {
+  position: relative;
   flex: 1;
-  min-height: 52px;
-  font-size: 13px;
+  min-height: 56px;
+  font-size: 14px;
   color: var(--secundario);
 }
 
 .nav-btn.activo {
-  color: var(--texto);
+  color: var(--acento);
   font-weight: 600;
+}
+
+/* Una barra sobre la pestana activa: el color solo no basta para decir donde estas. */
+.nav-btn.activo::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--acento);
 }
 
 /* ---------- toast ---------- */
@@ -787,8 +928,8 @@ label .detalle {
   bottom: calc(72px + env(safe-area-inset-bottom));
   transform: translateX(-50%);
   max-width: 88vw;
-  background: var(--texto);
-  color: #ffffff;
+  background: var(--toast-fondo);
+  color: var(--toast-texto);
   font-size: 13px;
   padding: 10px 14px;
   border-radius: 2px;
@@ -814,7 +955,7 @@ dialog {
 }
 
 dialog::backdrop {
-  background: rgba(17, 17, 17, 0.35);
+  background: var(--velo);
 }
 
 @media (prefers-reduced-motion: reduce) {

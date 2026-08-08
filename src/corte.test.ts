@@ -224,6 +224,42 @@ describe('dos lotes de 18 con algo de mayoreo', () => {
 
 // ---------- reparto ----------
 
+describe('calcularReparto con apartado', () => {
+  /** El dia de Fran: 360 de ingreso, 154 de te, 85 de gasolina y gas. */
+  it('el apartado se resta antes de partir a la mitad', () => {
+    const reparto = calcularReparto(
+      36000,
+      [{ id: 'g', concepto: 'Te', centavos: 15400 }],
+      [],
+      8500
+    );
+    expect(importe(reparto.utilidad)).toBe('$206.00');
+    expect(importe(reparto.apartado)).toBe('$85.00');
+    expect(importe(reparto.repartible)).toBe('$121.00');
+    expect(importe(reparto.fran)).toBe('$60.50');
+    expect(importe(reparto.primo)).toBe('$60.50');
+  });
+
+  it('sin apartado, repartible y utilidad son el mismo numero', () => {
+    const reparto = calcularReparto(36000, []);
+    expect(reparto.apartado).toBe(0);
+    expect(reparto.repartible).toBe(reparto.utilidad);
+    expect(reparto.fran + reparto.primo).toBe(reparto.utilidad);
+  });
+
+  it('las dos mitades siempre suman lo repartible, no la utilidad', () => {
+    const reparto = calcularReparto(36000, [], [], 8500);
+    expect(reparto.fran + reparto.primo).toBe(reparto.repartible);
+    expect(reparto.fran + reparto.primo).not.toBe(reparto.utilidad);
+  });
+
+  it('el centavo impar se lo queda Fran, que trae la caja', () => {
+    const reparto = calcularReparto(101, [], [], 0);
+    expect(reparto.fran).toBe(51);
+    expect(reparto.primo).toBe(50);
+  });
+});
+
 describe('calcularReparto', () => {
   it('parte mitad y mitad cuando la utilidad es par en centavos', () => {
     const reparto = calcularReparto(36000, [MAMA_JUANI, GASOLINA]);
@@ -288,6 +324,8 @@ describe('calcularReparto', () => {
       reponerCaja: 0,
       ajustes: 0,
       utilidad: 0,
+      apartado: 0,
+      repartible: 0,
       fran: 0,
       primo: 0,
     });

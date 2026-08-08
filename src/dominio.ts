@@ -122,6 +122,66 @@ export function crearVenta(entrada: {
   return entrada.retro === true ? { ...venta, retro: true } : venta;
 }
 
+/**
+ * Lo que escribe registrar de un jalon lo vendido en un rato: el turno de los dos a la hora que
+ * se declara, y una venta por vendedor con lo que le toco.
+ *
+ * Nace de que tocar +1 por botella tiene friccion en la calle. Es mas facil acordarse de a que
+ * hora llegamos y cuantas se fueron en esa hora, y eso es exactamente lo que se teclea.
+ *
+ * Las piezas se capturan POR VENDEDOR y no juntas a proposito: la hielera, el cuadre del dia y
+ * las stats por persona viven de saber quien vendio que. Partir un total a la mitad inventaria
+ * un dato que nadie conto y haria que el cuadre marcara rojo sin que hubiera error.
+ *
+ * El turno solo se escribe si el vendedor no estaba ya en ese punto: registrar dos horas
+ * seguidas del mismo lugar es un solo rato ahi, y un evento repetido lo partiria en dos.
+ *
+ * Todas las piezas de la hora llevan la MISMA marca de tiempo, la de llegada. Es lo que se
+ * declaro —"de cinco a seis se fueron doce"— y cae entera en la franja de las cinco, que es la
+ * unidad con la que se lee la cuadricula de lugar x hora.
+ */
+export function eventosDeHora(
+  eventos: readonly AppEvent[],
+  entrada: {
+    ts: string;
+    fecha: string;
+    point: string;
+    device: string;
+    piezas: Readonly<Record<Vendedor, number>>;
+  }
+): AppEvent[] {
+  const salida: AppEvent[] = [];
+
+  for (const vendedor of VENDEDORES) {
+    if (turnoActual(eventos, vendedor, entrada.fecha)?.point === entrada.point) continue;
+    salida.push(
+      crearTurno({
+        ts: entrada.ts,
+        point: entrada.point,
+        vendor: vendedor,
+        device: entrada.device,
+      })
+    );
+  }
+
+  for (const vendedor of VENDEDORES) {
+    const qty = entrada.piezas[vendedor];
+    if (!Number.isInteger(qty) || qty <= 0) continue;
+    salida.push(
+      crearVenta({
+        ts: entrada.ts,
+        point: entrada.point,
+        channel: 'calle',
+        vendor: vendedor,
+        qty,
+        device: entrada.device,
+      })
+    );
+  }
+
+  return salida;
+}
+
 /** Marcar lugar no registra ninguna pieza: solo dice donde esta parado el vendedor desde esa hora. */
 export function crearTurno(entrada: {
   ts: string;
@@ -235,6 +295,127 @@ export function anularUltimaVenta(
   return crearAnulacion(eventos, ultima.id, device, ts);
 }
 
+// ---------- correccion de lugar ----------
+
+export type VentaMovida = { anulacion: VoidEvent; venta: SaleEvent };
+
+/**
+ * Corregir el lugar de una venta ya registrada: se vendio en la Plazuela pero el telefono
+ * seguia marcando Parque Sinaloa.
+ *
+ * No la edita, como nada aqui: anula la que quedo mal y escribe la misma pieza en el lugar
+ * correcto, conservando su hora original —la venta ocurrio cuando ocurrio— y dejando anotado
+ * de donde venia. El dinero no se mueve ni cuando el corte del dia ya esta cerrado: el ingreso
+ * sale de piezas por canal y nunca mira el punto.
+ *
+ * null si la venta no existe, ya estaba anulada, o ya estaba en ese lugar.
+ */
+export function moverVenta(
+  eventos: readonly AppEvent[],
+  idVenta: string,
+  punto: string,
+  device: string,
+  ts: string
+): VentaMovida | null {
+  const venta = eventos.find((e): e is SaleEvent => e.type === 'sale' && e.id === idVenta);
+  if (venta === undefined || venta.point === punto) return null;
+  const anulacion = crearAnulacion(eventos, idVenta, device, ts);
+  if (anulacion === null) return null;
+  return {
+    anulacion,
+    venta: { ...venta, id: nuevoId(device), point: punto, movedFrom: venta.point },
+  };
+}
+
+export type CorreccionLugar = {
+  punto: string;
+  desde: string;
+  /** A quienes les cambia el lugar. Vacio nunca: sin nadie a quien corregir el plan es null. */
+  vendedores: Vendedor[];
+  piezas: number;
+  ventasMovidas: number;
+  /** Todo lo que hay que escribir, en orden: turnos, anulaciones y las ventas ya corregidas. */
+  eventos: AppEvent[];
+};
+
+/**
+ * "En realidad ya estabamos en el otro lugar desde las HH:MM": marca el lugar a esa hora y
+ * reacredita ahi las ventas que se habian ido al lugar equivocado.
+ *
+ * Corrige los dos errores juntos porque siempre vienen juntos: el que se mueve y se le olvida
+ * marcar sigue vendiendo, y cada toque se le acredita al lugar de antes. Mover solo las ventas
+ * dejaria el turno mintiendo; mover solo el turno dejaria las piezas donde no fueron.
+ *
+ * El lugar se le marca a los dos por la misma razon que al marcarlo en vivo: salen juntos y el
+ * registro es de un solo telefono. Las ventas, en cambio, se corrigen vendedor por vendedor y
+ * solo las del punto que cada quien traia mal, dentro de la ventana que va de `desde` hasta el
+ * siguiente lugar que ese vendedor marco: mas alla el registro ya decia la verdad.
+ *
+ * null cuando no hay nada que corregir: los dos ya estaban ahi.
+ */
+export function planCorreccionLugar(
+  eventos: readonly AppEvent[],
+  entrada: { desde: string; punto: string; device: string; ahora: string }
+): CorreccionLugar | null {
+  const inicio = Date.parse(entrada.desde);
+  if (Number.isNaN(inicio) || entrada.punto === '') return null;
+  const clave = claveFecha(entrada.desde);
+
+  const turnos: ShiftEvent[] = [];
+  const anulaciones: VoidEvent[] = [];
+  const corregidas: SaleEvent[] = [];
+  const vendedores: Vendedor[] = [];
+  let piezas = 0;
+
+  for (const vendedor of VENDEDORES) {
+    const equivocado = turnoEn(eventos, vendedor, entrada.desde);
+    if (equivocado !== null && equivocado.point === entrada.punto) continue;
+
+    vendedores.push(vendedor);
+    turnos.push(
+      crearTurno({ ts: entrada.desde, point: entrada.punto, vendor: vendedor, device: entrada.device })
+    );
+    if (equivocado === null) continue;
+
+    // Un turno que empezo justo a esa hora nunca fue cierto: se toco el lugar equivocado al
+    // llegar. Se anula en vez de dejar en la lista un rato de cero minutos que nadie estuvo.
+    if (Date.parse(equivocado.ts) === inicio) {
+      const anulacion = crearAnulacion(eventos, equivocado.id, entrada.device, entrada.ahora);
+      if (anulacion !== null) anulaciones.push(anulacion);
+    }
+
+    const siguiente = turnoSiguiente(eventos, vendedor, entrada.desde);
+    const hasta = siguiente === null ? Infinity : Date.parse(siguiente.ts);
+    const malas = ordenarPorHora(
+      ventasActivas(eventos).filter(
+        (v) =>
+          v.vendor === vendedor &&
+          v.point === equivocado.point &&
+          claveFecha(v.ts) === clave &&
+          Date.parse(v.ts) >= inicio &&
+          Date.parse(v.ts) < hasta
+      )
+    );
+    for (const mala of malas) {
+      const movida = moverVenta(eventos, mala.id, entrada.punto, entrada.device, entrada.ahora);
+      if (movida === null) continue;
+      anulaciones.push(movida.anulacion);
+      corregidas.push(movida.venta);
+      piezas += mala.qty;
+    }
+  }
+
+  if (vendedores.length === 0) return null;
+  return {
+    punto: entrada.punto,
+    desde: entrada.desde,
+    vendedores,
+    piezas,
+    ventasMovidas: corregidas.length,
+    eventos: [...turnos, ...anulaciones, ...corregidas],
+  };
+}
+
 // ---------- consultas ----------
 
 export function idsAnulados(eventos: readonly AppEvent[]): Set<string> {
@@ -299,6 +480,39 @@ export function turnoActual(
     turnosActivos(eventos).filter((t) => t.vendor === vendedor && claveFecha(t.ts) === clave)
   );
   return suyos[suyos.length - 1] ?? null;
+}
+
+/** Los turnos activos de un vendedor en el dia de esa marca de tiempo, en orden. */
+function turnosDelDiaDe(eventos: readonly AppEvent[], vendedor: Vendedor, ts: string): ShiftEvent[] {
+  const clave = claveFecha(ts);
+  return ordenarPorHora(
+    turnosActivos(eventos).filter((t) => t.vendor === vendedor && claveFecha(t.ts) === clave)
+  );
+}
+
+/**
+ * Donde creia la app que estaba parado el vendedor a esa hora: su ultimo lugar marcado hasta
+ * ese momento. Es turnoActual pero mirando a una hora cualquiera y no al reloj de ahora, que es
+ * lo que hace falta para corregir un rato que ya paso. null = a esa hora no habia lugar marcado.
+ */
+export function turnoEn(
+  eventos: readonly AppEvent[],
+  vendedor: Vendedor,
+  ts: string
+): ShiftEvent | null {
+  const marca = Date.parse(ts);
+  const hasta = turnosDelDiaDe(eventos, vendedor, ts).filter((t) => Date.parse(t.ts) <= marca);
+  return hasta[hasta.length - 1] ?? null;
+}
+
+/** El siguiente lugar que marco el vendedor despues de esa hora: donde deja de valer el anterior. */
+function turnoSiguiente(
+  eventos: readonly AppEvent[],
+  vendedor: Vendedor,
+  ts: string
+): ShiftEvent | null {
+  const marca = Date.parse(ts);
+  return turnosDelDiaDe(eventos, vendedor, ts).find((t) => Date.parse(t.ts) > marca) ?? null;
 }
 
 export function ordenarPorHora<T extends { ts: string; id: string }>(eventos: readonly T[]): T[] {
@@ -760,7 +974,7 @@ export function validarEvento(valor: unknown): AppEvent | null {
   }
 
   if (type !== 'sale') return null;
-  const { point, channel, vendor, qty, retro } = valor as Record<string, unknown>;
+  const { point, channel, vendor, qty, retro, movedFrom } = valor as Record<string, unknown>;
   if (!textoValido(point)) return null;
   if (typeof channel !== 'string' || !CANALES.includes(channel as Canal)) return null;
   if (typeof vendor !== 'string' || !VENDEDORES.includes(vendor as Vendedor)) return null;
@@ -776,7 +990,10 @@ export function validarEvento(valor: unknown): AppEvent | null {
     qty,
     device,
   };
-  return retro === true ? { ...venta, retro: true } : venta;
+  const conRetro: SaleEvent = retro === true ? { ...venta, retro: true } : venta;
+  // El origen se conserva si viene bien escrito y se descarta si no: es una anotacion de
+  // historico, no un dato del que dependa ninguna cuenta, y no vale perder la venta por el.
+  return textoValido(movedFrom) ? { ...conRetro, movedFrom } : conRetro;
 }
 
 export function validarAjustes(valor: unknown, deviceId: string): Settings {

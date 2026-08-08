@@ -11,6 +11,12 @@ export type SaleEvent = {
   qty: number;
   device: string;
   retro?: true;
+  /**
+   * Lugar al que estuvo acreditada antes de corregirla. Solo lo traen las ventas que nacieron
+   * de una correccion de lugar, y dice de donde vinieron: sin esto la linea nueva seria
+   * indistinguible de una venta cualquiera y el historico no contaria que hubo un error.
+   */
+  movedFrom?: string;
 };
 
 export type VoidEvent = {

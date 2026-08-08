@@ -15,13 +15,16 @@ import {
   duracionLegible,
   enHielera,
   eventosDeArchivo,
+  eventosDeHora,
   filtrarRango,
   hieleraDe,
   hieleras,
   isoDesdeFechaYHora,
   jornada,
   mezclar,
+  moverVenta,
   panelVendedor,
+  planCorreccionLugar,
   planRespaldo,
   porDia,
   porHora,
@@ -36,6 +39,7 @@ import {
   totalDelDia,
   totalPiezas,
   turnoActual,
+  turnoEn,
   ultimaVentaActiva,
   validarEvento,
   ventasActivas,
@@ -1157,5 +1161,296 @@ describe('validarEvento con turnos', () => {
     expect(segunda.nuevos).toBe(0);
     expect(segunda.repetidos).toBe(1);
     expect(segunda.eventos).toHaveLength(1);
+  });
+
+  it('conserva el lugar de origen de una venta corregida', () => {
+    const crudo = {
+      id: 's9',
+      type: 'sale',
+      ts: '2026-07-30T17:30:00',
+      point: 'Plazuela',
+      channel: 'calle',
+      vendor: 'Fran',
+      qty: 1,
+      device: 'dev2',
+      movedFrom: 'Parque Sinaloa',
+    };
+    expect(validarEvento(crudo)).toEqual(crudo);
+    // Un origen ilegible no tira la venta: es una anotacion, no un dato de ninguna cuenta.
+    expect(validarEvento({ ...crudo, movedFrom: 7 })).toEqual({ ...crudo, movedFrom: undefined });
+  });
+});
+
+describe('turnoEn', () => {
+  const HOY = '2026-07-30';
+  const eventos: AppEvent[] = [
+    turno({ id: 't1', ts: `${HOY}T16:00:00`, point: 'Parque Sinaloa' }),
+    turno({ id: 't2', ts: `${HOY}T18:00:00`, point: 'Plazuela' }),
+  ];
+
+  it('devuelve el lugar que estaba vigente a esa hora, no el ultimo del dia', () => {
+    expect(turnoEn(eventos, 'Fran', `${HOY}T17:00:00`)?.point).toBe('Parque Sinaloa');
+    expect(turnoEn(eventos, 'Fran', `${HOY}T19:00:00`)?.point).toBe('Plazuela');
+  });
+
+  it('el turno que empieza justo a esa hora ya cuenta', () => {
+    expect(turnoEn(eventos, 'Fran', `${HOY}T18:00:00`)?.point).toBe('Plazuela');
+  });
+
+  it('antes del primer lugar marcado no hay turno, y el de otro dia no se arrastra', () => {
+    expect(turnoEn(eventos, 'Fran', `${HOY}T15:00:00`)).toBeNull();
+    expect(turnoEn(eventos, 'Fran', '2026-07-31T17:00:00')).toBeNull();
+  });
+});
+
+describe('moverVenta', () => {
+  const HOY = '2026-07-30';
+  const AHORA = `${HOY}T19:00:00`;
+
+  it('anula la venta mal acreditada y reescribe la misma pieza en el lugar correcto', () => {
+    const eventos: AppEvent[] = [
+      venta({ id: 'a', ts: `${HOY}T17:30:00`, point: 'Parque Sinaloa', qty: 2 }),
+    ];
+    const movida = moverVenta(eventos, 'a', 'Plazuela', 'dev1', AHORA);
+    expect(movida).not.toBeNull();
+    if (movida === null) return;
+
+    expect(movida.anulacion.refId).toBe('a');
+    expect(movida.venta.id).not.toBe('a');
+    expect(movida.venta.point).toBe('Plazuela');
+    expect(movida.venta.movedFrom).toBe('Parque Sinaloa');
+    // La hora, la cantidad y el vendedor son los de la venta: lo unico malo era el lugar.
+    expect(movida.venta.ts).toBe(`${HOY}T17:30:00`);
+    expect(movida.venta.qty).toBe(2);
+    expect(movida.venta.vendor).toBe('Fran');
+
+    const despues = [...eventos, movida.anulacion, movida.venta];
+    expect(ventasActivas(despues).map((v) => v.point)).toEqual(['Plazuela']);
+    // El dia no gana ni pierde piezas: corregir el lugar nunca mueve dinero.
+    expect(totalPiezas(ventasActivas(despues))).toBe(2);
+  });
+
+  it('conserva la marca de retroactiva', () => {
+    const eventos: AppEvent[] = [venta({ id: 'a', ts: `${HOY}T17:30:00`, retro: true })];
+    expect(moverVenta(eventos, 'a', 'Parque Sinaloa', 'dev1', AHORA)?.venta.retro).toBe(true);
+  });
+
+  it('no mueve al mismo lugar, ni una venta anulada, ni un id que no existe', () => {
+    const eventos: AppEvent[] = [
+      venta({ id: 'a', ts: `${HOY}T17:30:00`, point: 'Plazuela' }),
+      venta({ id: 'b', ts: `${HOY}T17:40:00`, point: 'Plazuela' }),
+      anulacion('v1', 'b'),
+    ];
+    expect(moverVenta(eventos, 'a', 'Plazuela', 'dev1', AHORA)).toBeNull();
+    expect(moverVenta(eventos, 'b', 'Parque Sinaloa', 'dev1', AHORA)).toBeNull();
+    expect(moverVenta(eventos, 'zz', 'Parque Sinaloa', 'dev1', AHORA)).toBeNull();
+  });
+});
+
+describe('planCorreccionLugar', () => {
+  const HOY = '2026-07-30';
+  const AHORA = new Date(`${HOY}T20:00:00`);
+
+  /** Los dos salieron juntos a Parque Sinaloa a las 16:00, como siempre. */
+  function enParqueSinaloa(): AppEvent[] {
+    return [
+      turno({ id: 't1', ts: `${HOY}T16:00:00`, point: 'Parque Sinaloa', vendor: 'Fran' }),
+      turno({ id: 't2', ts: `${HOY}T16:00:00`, point: 'Parque Sinaloa', vendor: 'Primo' }),
+    ];
+  }
+
+  function corregir(eventos: readonly AppEvent[], hora: string, punto: string) {
+    return planCorreccionLugar(eventos, {
+      desde: `${HOY}T${hora}:00`,
+      punto,
+      device: 'dev1',
+      ahora: `${HOY}T20:00:00`,
+    });
+  }
+
+  it('se movieron a la Plazuela y siguieron vendiendo: marca el lugar y reacredita las piezas', () => {
+    const eventos: AppEvent[] = [
+      ...enParqueSinaloa(),
+      venta({ id: 'a', ts: `${HOY}T16:30:00`, point: 'Parque Sinaloa' }),
+      venta({ id: 'b', ts: `${HOY}T17:30:00`, point: 'Parque Sinaloa' }),
+    ];
+    const plan = corregir(eventos, '17:20', 'Plazuela');
+    expect(plan).not.toBeNull();
+    if (plan === null) return;
+
+    expect(plan.vendedores).toEqual(['Fran', 'Primo']);
+    expect(plan.ventasMovidas).toBe(1);
+    expect(plan.piezas).toBe(1);
+
+    const despues = [...eventos, ...plan.eventos];
+    expect(turnoActual(despues, 'Fran', HOY)?.point).toBe('Plazuela');
+    expect(turnoActual(despues, 'Primo', HOY)?.point).toBe('Plazuela');
+    // La de las 16:30 se queda donde de verdad ocurrio; solo se muda la de despues.
+    expect(porPunto(ventasActivas(despues), []).map((b) => [b.etiqueta, b.valor])).toEqual([
+      ['Parque Sinaloa', 1],
+      ['Plazuela', 1],
+    ]);
+    expect(totalPiezas(ventasActivas(despues))).toBe(2);
+  });
+
+  it('la venta corregida cae dentro del turno nuevo y deja de estar fuera de turno', () => {
+    const eventos: AppEvent[] = [
+      ...enParqueSinaloa(),
+      venta({ id: 'b', ts: `${HOY}T17:30:00`, point: 'Parque Sinaloa' }),
+    ];
+    const plan = corregir(eventos, '17:20', 'Plazuela');
+    const despues = [...eventos, ...(plan?.eventos ?? [])];
+    const { turnos, sinTurno } = jornada(despues, HOY, AHORA);
+    expect(sinTurno).toBe(0);
+    expect(turnos.filter((t) => t.vendedor === 'Fran').map((t) => [t.punto, t.piezas])).toEqual([
+      ['Parque Sinaloa', 0],
+      ['Plazuela', 1],
+    ]);
+  });
+
+  it('corrige las ventas de los dos vendedores, cada quien las suyas', () => {
+    const eventos: AppEvent[] = [
+      ...enParqueSinaloa(),
+      venta({ id: 'a', ts: `${HOY}T17:30:00`, point: 'Parque Sinaloa', vendor: 'Fran', qty: 2 }),
+      venta({ id: 'b', ts: `${HOY}T17:40:00`, point: 'Parque Sinaloa', vendor: 'Primo', qty: 3 }),
+    ];
+    const plan = corregir(eventos, '17:20', 'Plazuela');
+    expect(plan?.ventasMovidas).toBe(2);
+    expect(plan?.piezas).toBe(5);
+  });
+
+  it('no toca lo que quedo despues del siguiente lugar marcado: ahi el registro ya era cierto', () => {
+    const eventos: AppEvent[] = [
+      ...enParqueSinaloa(),
+      turno({ id: 't3', ts: `${HOY}T18:00:00`, point: 'Parque Sinaloa', vendor: 'Fran' }),
+      turno({ id: 't4', ts: `${HOY}T18:00:00`, point: 'Parque Sinaloa', vendor: 'Primo' }),
+      venta({ id: 'a', ts: `${HOY}T17:30:00`, point: 'Parque Sinaloa' }),
+      venta({ id: 'b', ts: `${HOY}T18:30:00`, point: 'Parque Sinaloa' }),
+    ];
+    const plan = corregir(eventos, '17:20', 'Plazuela');
+    expect(plan?.ventasMovidas).toBe(1);
+    const despues = [...eventos, ...(plan?.eventos ?? [])];
+    expect(
+      ventasActivas(despues)
+        .filter((v) => v.point === 'Parque Sinaloa')
+        .map((v) => v.id)
+    ).toEqual(['b']);
+  });
+
+  it('si el lugar se toco mal desde que llegaron, el turno equivocado se anula entero', () => {
+    const eventos: AppEvent[] = [
+      ...enParqueSinaloa(),
+      venta({ id: 'a', ts: `${HOY}T16:30:00`, point: 'Parque Sinaloa' }),
+    ];
+    const plan = corregir(eventos, '16:00', 'Plazuela');
+    const despues = [...eventos, ...(plan?.eventos ?? [])];
+    // Ni un rato de cero minutos en Parque Sinaloa: nadie estuvo parado ahi.
+    expect(jornada(despues, HOY, AHORA).turnos.map((t) => t.punto)).toEqual([
+      'Plazuela',
+      'Plazuela',
+    ]);
+    expect(plan?.piezas).toBe(1);
+  });
+
+  it('al que ya estaba en el lugar correcto no se le escribe nada', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: `${HOY}T16:00:00`, point: 'Parque Sinaloa', vendor: 'Fran' }),
+      turno({ id: 't2', ts: `${HOY}T16:00:00`, point: 'Plazuela', vendor: 'Primo' }),
+      venta({ id: 'b', ts: `${HOY}T17:30:00`, point: 'Plazuela', vendor: 'Primo' }),
+    ];
+    const plan = corregir(eventos, '17:20', 'Plazuela');
+    expect(plan?.vendedores).toEqual(['Fran']);
+    expect(plan?.ventasMovidas).toBe(0);
+  });
+
+  it('null cuando los dos ya estaban ahi: no hay nada que corregir', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: `${HOY}T16:00:00`, point: 'Plazuela', vendor: 'Fran' }),
+      turno({ id: 't2', ts: `${HOY}T16:00:00`, point: 'Plazuela', vendor: 'Primo' }),
+    ];
+    expect(corregir(eventos, '17:20', 'Plazuela')).toBeNull();
+  });
+
+  it('sin lugar marcado marca el lugar y no inventa ventas que mover', () => {
+    const plan = corregir([], '17:20', 'Plazuela');
+    expect(plan?.vendedores).toEqual(['Fran', 'Primo']);
+    expect(plan?.ventasMovidas).toBe(0);
+    expect(plan?.eventos).toHaveLength(2);
+  });
+});
+
+// ---------- registrar de un jalon lo vendido en un rato ----------
+
+describe('eventosDeHora', () => {
+  const HOY = '2026-08-08';
+  const TS = `${HOY}T17:00:00-07:00`;
+  const base = { ts: TS, fecha: HOY, point: 'Plazuela', device: 'd' };
+
+  it('marca el turno de los dos y acredita a cada quien lo suyo', () => {
+    const nuevos = eventosDeHora([], { ...base, piezas: { Fran: 7, Primo: 5 } });
+
+    const turnos = nuevos.filter((e) => e.type === 'shift');
+    expect(turnos).toHaveLength(2);
+    expect(turnos.every((t) => t.ts === TS)).toBe(true);
+
+    const ventas = nuevos.filter((e) => e.type === 'sale');
+    expect(ventas).toHaveLength(2);
+    expect(ventas.map((v) => [v.vendor, v.qty])).toEqual([
+      ['Fran', 7],
+      ['Primo', 5],
+    ]);
+  });
+
+  it('todas las piezas caen en la hora declarada, no en la de ahora', () => {
+    const nuevos = eventosDeHora([], { ...base, piezas: { Fran: 7, Primo: 5 } });
+    expect(nuevos.every((e) => e.ts === TS)).toBe(true);
+  });
+
+  it('son ventas normales, no retroactivas: asi se trabaja ahora', () => {
+    const ventas = eventosDeHora([], { ...base, piezas: { Fran: 3, Primo: 0 } }).filter(
+      (e) => e.type === 'sale'
+    );
+    expect(ventas[0]).not.toHaveProperty('retro');
+    expect(ventas[0]?.channel).toBe('calle');
+  });
+
+  it('el que no vendio no genera venta de cero', () => {
+    const nuevos = eventosDeHora([], { ...base, piezas: { Fran: 7, Primo: 0 } });
+    const ventas = nuevos.filter((e) => e.type === 'sale');
+    expect(ventas).toHaveLength(1);
+    expect(ventas[0]?.vendor).toBe('Fran');
+  });
+
+  it('registrar dos horas del mismo lugar no parte el turno en dos', () => {
+    const primera = eventosDeHora([], { ...base, piezas: { Fran: 7, Primo: 5 } });
+    const segunda = eventosDeHora(primera, {
+      ...base,
+      ts: `${HOY}T18:00:00-07:00`,
+      piezas: { Fran: 4, Primo: 3 },
+    });
+    expect(segunda.filter((e) => e.type === 'shift')).toHaveLength(0);
+    expect(segunda.filter((e) => e.type === 'sale')).toHaveLength(2);
+  });
+
+  it('cambiar de lugar si abre turno nuevo', () => {
+    const primera = eventosDeHora([], { ...base, piezas: { Fran: 7, Primo: 5 } });
+    const segunda = eventosDeHora(primera, {
+      ...base,
+      point: 'Parque Sinaloa',
+      ts: `${HOY}T18:00:00-07:00`,
+      piezas: { Fran: 4, Primo: 3 },
+    });
+    expect(segunda.filter((e) => e.type === 'shift')).toHaveLength(2);
+  });
+
+  it('declarar la llegada sin vender nada solo marca el lugar', () => {
+    const nuevos = eventosDeHora([], { ...base, piezas: { Fran: 0, Primo: 0 } });
+    expect(nuevos).toHaveLength(2);
+    expect(nuevos.every((e) => e.type === 'shift')).toBe(true);
+  });
+
+  it('no escribe nada cuando ya estaban ahi y nadie vendio', () => {
+    const primera = eventosDeHora([], { ...base, piezas: { Fran: 0, Primo: 0 } });
+    expect(eventosDeHora(primera, { ...base, piezas: { Fran: 0, Primo: 0 } })).toEqual([]);
   });
 });

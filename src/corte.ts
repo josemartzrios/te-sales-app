@@ -78,6 +78,16 @@ export type Reparto = {
   reponerCaja: number;
   ajustes: number;
   utilidad: number;
+  /**
+   * Los gastos fijos del dia —gasolina y gas— que se guardan en la caja al cerrar. Se restan
+   * despues de la utilidad y antes de partir a la mitad, asi que los pagan los dos.
+   *
+   * Los cortes cerrados antes de esta regla no lo traen y se leen con 0: en aquellos el
+   * apartado salia del lado de Fran, y el pasado no se recalcula.
+   */
+  apartado: number;
+  /** utilidad - apartado: lo que de verdad se parte entre los dos. */
+  repartible: number;
   fran: number;
   primo: number;
 };
@@ -204,12 +214,14 @@ function sumar(lineas: readonly { centavos: number }[]): number {
 export function calcularReparto(
   ingreso: number,
   gastos: readonly LineaGasto[],
-  ajustes: readonly LineaAjuste[] = []
+  ajustes: readonly LineaAjuste[] = [],
+  apartado = 0
 ): Reparto {
   const totalGastos = sumar(gastos);
   const totalAjustes = sumar(ajustes);
   const utilidad = ingreso - totalGastos + totalAjustes;
-  const primo = Math.trunc(utilidad / 2);
+  const repartible = utilidad - apartado;
+  const primo = Math.trunc(repartible / 2);
 
   return {
     ingreso,
@@ -217,13 +229,19 @@ export function calcularReparto(
     reponerCaja: 0,
     ajustes: totalAjustes,
     utilidad,
-    fran: utilidad - primo,
+    apartado,
+    repartible,
+    fran: repartible - primo,
     primo,
   };
 }
 
-export function repartoDeBorrador(borrador: Borrador, ingreso: Ingreso): Reparto {
-  return calcularReparto(ingreso.total, borrador.gastos);
+export function repartoDeBorrador(
+  borrador: Borrador,
+  ingreso: Ingreso,
+  apartado = 0
+): Reparto {
+  return calcularReparto(ingreso.total, borrador.gastos, [], apartado);
 }
 
 /**
@@ -245,6 +263,8 @@ export function cerrarCorte(entrada: {
   precios: Precios;
   device: string;
   cerradoEn: string;
+  /** Lo que se aparto para gasolina y gas. Se resta antes de partir a la mitad. */
+  apartado?: number;
   /** Como quedo la caja despues de aplicar los movimientos del cierre. */
   caja?: CajaAlCerrar;
 }): CorteCerrado {
@@ -264,7 +284,7 @@ export function cerrarCorte(entrada: {
     ajustes: [],
     fondo: { gasto: FONDO_GASTO, cambio: FONDO_CAMBIO },
     caja: entrada.caja === undefined ? null : { ...entrada.caja },
-    reparto: repartoDeBorrador(entrada.borrador, entrada.ingreso),
+    reparto: repartoDeBorrador(entrada.borrador, entrada.ingreso, entrada.apartado ?? 0),
   };
 }
 
@@ -385,12 +405,22 @@ function validarReparto(valor: unknown): Reparto | null {
     const n = campos[nombre];
     if (typeof n !== 'number' || !Number.isInteger(n) || Math.abs(n) > MONTO_MAXIMO) return null;
   }
+  // Los cortes cerrados antes de que el apartado se restara antes de repartir no traen estos
+  // dos campos. Se leen con lo que se guardo entonces: el pasado no se recalcula.
+  const utilidad = campos['utilidad'] as number;
+  const apartado = centavosValidos(campos['apartado'], -MONTO_MAXIMO) ? campos['apartado'] : 0;
+  const repartible = centavosValidos(campos['repartible'], -MONTO_MAXIMO)
+    ? campos['repartible']
+    : utilidad - apartado;
+
   return {
     ingreso: campos['ingreso'] as number,
     gastos: campos['gastos'] as number,
     reponerCaja: campos['reponerCaja'] as number,
     ajustes: campos['ajustes'] as number,
-    utilidad: campos['utilidad'] as number,
+    utilidad,
+    apartado,
+    repartible,
     fran: campos['fran'] as number,
     primo: campos['primo'] as number,
   };
@@ -479,6 +509,10 @@ export function resumenCorte(corte: CorteCerrado): string {
   lineas.push('');
 
   lineas.push(`Utilidad: ${importe(reparto.utilidad)}`);
+  if (reparto.apartado > 0) {
+    lineas.push(`Gasolina y gas: ${importe(reparto.apartado)}`);
+    lineas.push(`Se reparte: ${importe(reparto.repartible)}`);
+  }
   lineas.push(`Fran: ${importe(reparto.fran)}`);
   lineas.push(`Primo: ${importe(reparto.primo)}`);
   lineas.push('');

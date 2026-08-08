@@ -21,20 +21,46 @@ atajos, o se escribe la cantidad) y **Cargar**.
 Hazlo cada mañana. La app no arrastra saldo de ayer: cada día empieza en cero y lo que sobró se vuelve a
 cargar si vuelve a salir. Si a lo largo del día se recarga, se registra otra vez y **se suma**.
 
-### 2. Al llegar a un lugar: marcar dónde están
+### 2. El lugar
 
-La pantalla pregunta **"¿Dónde están?"**: tocar el lugar. Eso abre el turno **de los dos**, porque salen
-juntos al mismo punto. Un solo toque, no uno por vendedor.
+El lugar (el **turno**) dice a dónde se acredita cada pieza. Con el registro por rato se elige ahí mismo y
+no hay que declararlo aparte: registrar abre el turno **de los dos** a la hora que le pongas, porque salen
+juntos al mismo punto.
 
-Hay que hacerlo **antes de la primera venta del lugar**. Sin marcar lugar la app no muestra el botón de
-vender, porque no sabría a dónde acreditar la pieza.
-
-Arriba de todo se elige de quién es la venta (**Fran** o **Primo**). Ese selector decide a quién se
-acredita cada toque — y también a quién le pega el `−1`.
+Si vas a **contar en vivo** con el `+1`, sí hay que marcar el lugar antes de la primera venta: sin turno la
+app no muestra el botón, porque no sabría a dónde acreditar la pieza. Y arriba se elige de quién es la venta
+(**Fran** o **Primo**) — ese selector decide a quién se acredita cada toque y a quién le pega el `−1`.
 
 ### 3. Vender
 
-Un toque en el botón grande **`+1 · Fran`** por cada botella. La app guarda sola la hora y el lugar.
+Arriba de **Vender** está el registro por rato, que es como se trabaja: **lugar**, **hora de llegada** y las
+**piezas de ese rato, una cifra por vendedor**. Un solo *Registrar* y queda.
+
+```
+¿Dónde y a qué hora?
+Lugar    [ Plazuela   v ]
+Llegamos [ 17:00        ]
+
+Piezas de ese rato
+Fran  [ 7 ]   Primo [ 5 ]
+
+[        Registrar        ]
+```
+
+Eso escribe el turno de los dos a esa hora y una venta por vendedor. La hora arranca en la de ahora en punto
+y se teclea encima cuando se captura un rato que ya pasó.
+
+**Las piezas se capturan por vendedor, no juntas.** La hielera, el cuadre del día y las stats por persona
+viven de saber quién vendió qué; partir un total a la mitad inventaría un dato que nadie contó y haría que el
+cuadre marcara rojo sin que hubiera error.
+
+**Registrar dos horas del mismo lugar no parte el turno en dos**: es un solo rato ahí, y las piezas caen en
+su franja. Cambiar de lugar sí abre turno nuevo.
+
+### Contar en vivo
+
+Más abajo sigue el botón grande **`+1 · Fran`**, un toque por botella, para el rato que se quiera contar en
+vivo. La app guarda sola la hora y el lugar.
 
 - **`+2`** y **`+3`** para cuando se llevan varias de un jalón.
 - La tarjeta de arriba va diciendo dónde estás, desde qué hora, cuánto llevas ahí y cuántas piezas van.
@@ -72,20 +98,23 @@ cuántas piezas salieron de casa — el número que se cuenta contra lo que se l
 alguien vendió más piezas de las que tuvo en las manos: falta registrar una carga, o el traspaso quedó
 mal contado.
 
-Para comparar días o buscar la mejor hora de cada lugar, ir a **Stats** → la cuadrícula **Lugar × hora**.
+Para comparar días o buscar la mejor hora de cada lugar, **`⋯` → Stats** → la cuadrícula **Lugar × hora**.
 
 ### 8. Al cerrar: el corte de caja
 
 En **Corte**, el ingreso del día ya viene sumado de las ventas (calle × $20, mayoreo × $14), desglosado por
 canal para validarlo de un vistazo contra el efectivo real. Se capturan los gastos línea por línea
-(concepto + monto) y abajo sale la utilidad y cuánto le toca a cada quien, mitad y mitad.
-
-Abajo va el bloque **Caja**: cuánto hay en cada sobre (fondo, cambio, gasolina, gas, sueldo de Primo) y
-cuánto se le debe a la caja si se tomó dinero prestado. Ahí mismo se registra con un toque: **Tomé
-prestado**, **Devolví**, **Pagué** o **Aparté** — el signo lo pone el botón, no se teclea.
+(concepto + monto) y abajo, en un solo bloque, baja el desglose completo: ingreso, gastos del día, gasolina
+y gas, y lo que queda para repartir mitad y mitad.
 
 Después, **Al cerrar** dice lo único que hay que ejecutar: cuánto efectivo debería haber en el bulto,
-cuánto se queda en la caja y cuánto se lleva Fran.
+para compararlo contra el bulto. Ese número sale de cómo está la caja, y **Ver la caja** lleva directo a la
+pestaña donde se arregla.
+
+La caja tiene **pestaña propia**, porque responde otra pregunta que el corte. Ahí se ve cuánto hay en cada
+sobre (fondo, cambio, gasolina, gas, lo tuyo y el sueldo de Primo), cuánto se le debe si se tomó prestado, y se registra
+un movimiento con tres campos —sobre, cantidad y concepto— y dos botones: **Entró** o **Salió**. El signo lo
+pone el botón y no se teclea.
 
 **Cerrar corte** lo guarda como registro inmutable, aparta lo del día y devuelve lo que se debe hasta donde
 alcance. **Copiar resumen** manda el texto por WhatsApp o al portapapeles. Ver **El corte de caja** y
@@ -99,8 +128,21 @@ Luego, el respaldo entre los dos teléfonos: ver **Ritual diario** más abajo.
   No pregunta nada; si también le picas de más, un `+1` lo arregla. Ojo: se lleva **la venta completa**,
   así que un `−1` sobre un `+3` quita las tres piezas y hay que volver a capturarlas. Si el `−1` está
   apagado es que ese vendedor no tiene ventas de calle en este lugar hoy — revisa el selector de arriba.
+- **Te moviste y se te olvidó marcar el lugar:** el caso clásico — estabas en Parque Sinaloa, te fuiste a la
+  Plazuela, vendiste, y la pieza se acreditó al parque. Toca **Estábamos en otro lugar** (está en **Vender**,
+  debajo de los botones, y también en **Hoy**). Eliges el lugar bueno y **desde qué hora**: esa hora es el
+  corte, todo lo vendido de ahí en adelante se pasa. Dos atajos llenan la hora sola, y se llaman por lo que
+  hacen: **Solo la última venta** (el toque suelto en el lugar de al lado) y **Todo el turno** (tocaste mal el
+  lugar desde que llegaste). Lo de en medio —*me moví a las 17:20 y vendí tres*— se teclea a mano.
+  Antes de confirmar te dice exactamente cuántas piezas va a mover. Marca el lugar para los dos y reacredita
+  todas las ventas de esa ventana que se habían ido al lugar viejo.
+- **Una sola venta en el lugar equivocado:** **Hoy** → Movimientos → **Mover** en esa línea. Se anula y se
+  vuelve a escribir con **su misma hora** en el lugar correcto, marcada `MOVIDA` y con el lugar de origen a la
+  vista. **No mueve un peso**: el corte suma piezas por canal y nunca mira el punto, así que se puede corregir
+  aunque el corte de ese día ya esté cerrado.
 - **Marcaste el lugar equivocado:** vas a **Hoy** → Movimientos, buscas la línea con la etiqueta `LUGAR` y
-  tocas **Anular**. Luego marcas el correcto.
+  tocas **Anular**. Luego marcas el correcto. (Si ya vendiste desde ahí, mejor usa *Estábamos en otro lugar*:
+  anular el `LUGAR` deja las piezas donde están.)
 - **Cualquier otra cosa** (una carga mal puesta, una venta vieja): en **Hoy** → Movimientos, **Anular** en
   esa línea y registrar la correcta. Nada se borra: la anulación queda escrita y la línea aparece tachada.
 - **Se te olvidó registrar algo:** **Hoy** → **Venta retroactiva** o **Carga retroactiva**, y ahí pones la
@@ -110,6 +152,10 @@ Luego, el respaldo entre los dos teléfonos: ver **Ritual diario** más abajo.
 
 No se pierde nada: esas piezas cuentan igual en la hielera, en el total del día y en Stats. Solo que la
 vista Hoy avisa *"N piezas quedaron fuera de turno"*, porque no se les puede atribuir un rato concreto.
+
+**Estábamos en otro lugar** también arregla esto: marca el lugar a la hora que le digas y las piezas entran
+al turno. Si mueves una venta suelta con **Mover** y no hay turno que la cubra en el lugar nuevo, el aviso
+aparecerá — la venta está bien acreditada, lo que falta es el turno.
 
 ## Correr local
 
@@ -142,14 +188,14 @@ vendedores, los dos turnos y los traspasos entre sus hieleras.
 
 Eso quita el paso de consolidar cada noche, pero **hace el respaldo obligatorio**: ese teléfono es el
 único lugar donde existe el día. Antes, el intercambio entre los dos teléfonos servía de copia sin que
-nadie lo pensara; ahora ya no hay segunda copia. Al cierre del día, **Ajustes → Exportar JSON** y guardar
+nadie lo pensara; ahora ya no hay segunda copia. Al cierre del día, **`⋯` → Ajustes → Exportar JSON** y guardar
 el archivo fuera del teléfono (WhatsApp a uno mismo, correo, lo que sea).
 
 Si algún día se vuelve a capturar en dos teléfonos, la consolidación sigue ahí y **no puede duplicar
 nada** (el merge es idempotente por `id`):
 
-1. En el teléfono **B**: Ajustes → **Exportar JSON**. Manda el archivo al teléfono **A**.
-2. En el teléfono **A**: Ajustes → seleccionar el archivo en el input de importar. Aparece
+1. En el teléfono **B**: `⋯` → Ajustes → **Exportar JSON**. Manda el archivo al teléfono **A**.
+2. En el teléfono **A**: `⋯` → Ajustes → seleccionar el archivo en el input de importar. Aparece
    `Nuevos N · repetidos M · inválidos K`.
 3. Opcional inverso: exportar desde **A** e importar en **B** para que ambos queden completos.
 
@@ -158,21 +204,42 @@ Importar el mismo archivo dos veces no hace daño: los eventos ya presentes se i
 "Compartir resumen" manda el texto del día (por punto, canal, turno y vendedor) por WhatsApp o lo copia al
 portapapeles.
 
-## Las cinco pantallas
+## Las pantallas
 
-- **Vender** — el caso común. Arriba, una tarjeta por vendedor con lo que le queda en la hielera; la
-  seleccionada es a quien se le acredita. Debajo, el lugar donde están parados (el turno) y un solo botón
-  grande `+1 · Fran`: ya no hay que elegir punto al vender, porque el lugar ya está declarado. También
-  se carga la hielera y se pasan botellas de una a otra desde aquí.
+La barra de abajo lleva **las cuatro de todos los días**: Vender, Hoy, Corte y Caja. Stats y Ajustes se
+consultan de vez en cuando, así que viven detrás del **`⋯`** de la esquina superior derecha, que está en
+el mismo sitio en las cuatro. Desde ellas, **`‹ Volver`** regresa a la pantalla de la que se entró.
+
+Son seis pantallas y una barra de teléfono: con las seis abajo, cada botón bajaba a ~80 px, la etiqueta
+más larga apenas cabía, y *Ajustes* —que se toca una vez al mes— pesaba lo mismo que *Vender*. Lo de a
+diario tiene que ser lo que se ve.
+
+- **Vender** — el caso común. Arriba, el registro por rato: lugar, hora de llegada y las piezas de ese rato
+  por vendedor, en un solo *Registrar*. Debajo, el conteo en vivo: la tarjeta del turno y el botón grande
+  `+1 · Fran` para las veces que se quiera contar botella por botella. También se carga la hielera y se
+  pasan botellas de una a otra desde aquí.
 - **Hoy** — el tablero del día por vendedor: en hielera, vendió, ritmo por hora, mejor lugar y mejor hora,
   la lista de turnos con su franja y su ritmo, más las barras por lugar y por hora de esa persona. Abajo,
   el registro de movimientos (ventas, cargas, lugares y traspasos) con su botón de anular, y la captura
   retroactiva.
 - **Corte** — el cierre del día en dinero: ingreso calculado de las ventas, gastos capturados a mano,
   utilidad y reparto 50/50. Cerrar el corte lo vuelve un registro inmutable.
-- **Stats** — historia: rango (hoy / 7 días / todo), vendedor (ambos / Fran / Primo) y canal. Arriba de
-  todo, la cuadrícula **lugar × hora**: dónde y a qué hora se vende.
-- **Ajustes** — solo configuración: lugares, vendedor por defecto y respaldo.
+- **Caja** — dónde está el dinero: los seis sobres, lo que se le debe a la caja, la captura de movimientos
+  (sobre + cantidad + concepto, Entró o Salió) y el historial. Abajo, el **arqueo** (contar el bulto contra
+  el libro), el **cierre semanal** del domingo y el apartado por día de venta.
+- **Stats** (en el `⋯`) — historia: rango (hoy / 7 días / todo), vendedor (ambos / Fran / Primo) y canal.
+  Arriba de todo, la cuadrícula **lugar × hora**: dónde y a qué hora se vende.
+- **Ajustes** (en el `⋯`) — solo configuración: lugares, vendedor por defecto y respaldo.
+
+### Claro y oscuro
+
+La app sigue el tema del teléfono, sin interruptor propio. Se vende de tarde y de noche con el aparato en
+la mano: a las nueve, un fondo blanco puro deslumbra y tapa justo lo que se acaba de registrar. Todo el
+color pasa por variables CSS en `:root` y el bloque oscuro solo las reescribe, así que ninguna regla de
+estilo sabe en qué tema está.
+
+El `theme_color` del manifest se queda en blanco: es el color del *splash* al abrir y el manifest no
+admite variantes por tema.
 
 ## Los turnos
 
@@ -270,7 +337,11 @@ cerrados.
 El corte responde *cuánto ganamos*. La caja responde *dónde está el dinero y de quién es*. Son **dos libros
 distintos a propósito**, y mezclarlos es el error que cuesta dinero de verdad.
 
-El dinero de la caja vive en cinco **sobres**. No son bolsas físicas separadas —el efectivo es un solo
+El ritmo de la semana: **los gastos se cubren con el fondo**; si no alcanza, se toma prestado de lo apartado
+para gasolina. Cada corte del día abona a esa deuda lo que alcance. **El domingo** se carga gasolina, se le
+paga el gas a Mamá Juani y su sueldo a Primo, y el fondo vuelve a sus $200.
+
+El dinero de la caja vive en seis **sobres**. No son bolsas físicas separadas —el efectivo es un solo
 bulto— sino a quién le toca cada peso:
 
 | Sobre | Qué es | Cómo crece | Cómo baja |
@@ -279,7 +350,8 @@ bulto— sino a quién le toca cada peso:
 | Cambio | $120 rotatorio | fijo, no crece | solo si se toma prestado |
 | Gasolina | provisión | $45 por día de venta | al cargar gasolina |
 | Gas (Mamá Juani) | provisión | $40 por día de venta | al pagarle |
-| Sueldo de Primo | pasivo | su mitad de cada corte cerrado | al pagarle el sábado |
+| Lo tuyo (Fran) | pasivo | su mitad de cada corte cerrado | al cobrarlo |
+| Sueldo de Primo | pasivo | su mitad de cada corte cerrado | al pagarle el domingo |
 
 ```
 efectivo que debe haber en la caja = Σ sobres − deuda
@@ -317,18 +389,140 @@ ese sobre *debería* tener:
 | Tomé prestado | − | = | sale dinero del fondo para insumos → **deuda** |
 | Devolví | + | = | se regresa con lo que se vendió → **deuda** |
 
-Los cuatro van en pares exactos, así que una captura mala se deshace con su inverso y las dos líneas quedan a
-la vista. Por eso no hay tipo "corrección": los movimientos son inmutables como las ventas.
+**Lo que tecleas a mano siempre es uno de los dos últimos.** *Salió* deja deuda, *Entró* la salda — en
+cualquier sobre, sin excepción. Los gastos se cubren con el fondo y, si no alcanza, se toma prestado de lo
+apartado para gasolina; ese faltante tiene que aparecer como deuda o el domingo no alcanza para cargar.
+
+**Apartar y pagar no se teclean: los escriben los cierres**, que son los que conocen la regla.
+
+| Quién | Cuándo | Qué escribe |
+| --- | --- | --- |
+| Corte del día | al cerrar | aparta a gasolina, gas y sueldo de Primo |
+| Cierre semanal | el domingo | paga esos tres y los deja en cero |
+
+Por eso la captura son dos botones y no cuatro: *"saqué 18 de la gasolina para las botellas"* y *"cargué
+gasolina el domingo"* son dinero saliendo del mismo sobre, y por el signo son idénticos. Lo que los separa es
+quién los escribe, no qué botón se apretó.
+
+### Corregir un movimiento
+
+Un movimiento capturado a mano nace **abierto**: se puede editar y borrar, igual que un gasto del borrador.
+**Cerrar el corte lo sella**, y a partir de ahí ya solo se corrige con su inverso, como las ventas. Los
+movimientos que genera el propio cierre nacen sellados.
+
+Lo guardado antes de que existiera esta marca cuenta como sellado: instalar esta versión no vuelve editable
+un histórico que ya está dentro de cortes cerrados.
+
+### El efectivo esperado
+
+La línea *Efectivo esperado* del corte es **lo que traía la caja al EMPEZAR el día, más la utilidad**. El
+saldo al abrir, no el de ahora, y la diferencia importa:
+
+```
+Fondo 200 + cambio 120. Se sacan 200 del fondo para unas botellas PET de 218,
+los otros 18 salen del bulto, y se venden 600.
+
+En la mano quedan   320 − 200 + 600 − 18 = 702
+Al abrir + utilidad 320 + (600 − 218)    = 702  ✅
+Ahora   + utilidad  120 + (600 − 218)    = 502  ❌ los 200 restados dos veces
+```
+
+Los $200 prestados ya van dentro del gasto de $218; restarlos también del saldo los cobraría dos veces contra
+el bulto. Se asume que **todo préstamo termina en un gasto del negocio**, que es como se opera.
+
+La única salida que sí se resta aparte es el **sueldo de Primo**: su mitad ya salió de la utilidad el día que
+se ganó, así que pagársela mueve efectivo sin volver a costar. La gasolina y el gas no entran ahí porque el
+día que se pagan también se capturan como gasto.
+
+### Los gastos salen solos de la caja
+
+Capturar un gasto en el corte **descuenta el efectivo de la caja automáticamente**, en el orden en que se
+opera: primero el **fondo** y, si no alcanza, lo apartado para **gasolina**. No hay que anotarlo dos veces.
+
+- **Borrar el gasto devuelve el efectivo.** Las dos libretas no se separan.
+- **El cambio nunca paga gastos**: es para dar cambio, no para comprar.
+- **Nunca saca de un sobre más de lo que tiene.** Si el fondo trae $46 y el gasto es $100, salen $46 del
+  fondo y $54 de la gasolina. Si entre los dos no alcanza, **el resto no se registra en la caja**: ese dinero
+  salió de la venta del día o de una bolsa, no de la caja, y anotarlo inventaría efectivo que nunca tuvo. El
+  gasto sí cuenta completo en el corte, que es lo que decide la utilidad.
+- Estos movimientos **nacen sellados**: se corrigen borrando o reescribiendo el gasto, que es de donde
+  salieron. Dejarlos editables por su lado permitiría que el corte y la caja dijeran cosas distintas del
+  mismo peso.
+
+### El arqueo: contar el bulto contra el libro
+
+En la pestaña Caja se captura **lo que contaste con la mano**. La app compara contra lo que la caja dice que
+debería haber y te enseña la diferencia. **Nada se reescribe solo**: tú decides si lo cuadras.
+
+Si lo cuadras, se escribe un movimiento normal. Un **faltante** queda como deuda a la caja —se comporta igual
+que dinero que salió sin registrarse, y los cortes del día lo van reponiendo— y un **sobrante** como dinero
+devuelto. No hizo falta inventar un tipo nuevo.
+
+Ojo con el faltante: si aparece uno, lo más probable no es que se haya perdido dinero, sino que **falta
+capturar un movimiento**. Revisa el historial antes de ajustar.
+
+### El cierre semanal (domingo)
+
+Un botón en la pestaña Caja. Paga **lo que hay** en gasolina, gas y sueldo de Primo, y los deja en cero para
+que vuelvan a llenarse la semana que entra.
+
+- **Se paga lo que hay, no el objetivo.** Si entre semana se tomaron $18 de la gasolina para unas botellas,
+  el domingo solo alcanza para cargar lo que quedó. El objetivo baja con el pago y esos $18 siguen
+  apareciendo como deuda hasta que se repongan. No se inventa dinero que no está en la caja.
+- **El fondo y el cambio no se tocan aquí.** Su deuda se abona en cada corte del día, así que para el domingo
+  suelen estar completos. Si algo falta, el cierre lo dice y se arrastra.
+- **Cerrar dos veces el mismo domingo no paga doble**: los ids se derivan de la fecha, igual que en el corte.
 
 ### Qué pasa al cerrar el corte
 
-Cerrar aparta lo del día automáticamente y devuelve lo que se debe **hasta donde alcance el efectivo**:
+**Se paga todo y se reparte lo que queda**, en ese orden, que es como se opera con la mano:
 
-1. La mitad de Primo entra a su sobre (no cobra diario, cobra el sábado).
-2. De lo que queda se apartan $45 de gasolina y $40 de gas. Si no alcanza, se aparta lo que haya.
-3. Si sigue quedando efectivo y hay deuda, se abona al sobre que más deba.
-4. Lo que sobra es de Fran. **Nunca sale negativo por llenar sobres**: llenarlos con dinero de su bolsa sería
-   sacar de la caja para meter a la caja.
+1. La utilidad ya trae restados los gastos del día (el corte la calculó).
+2. De ahí se apartan $45 de gasolina y $40 de gas. Si no alcanza, se aparta lo que haya.
+3. Lo que sobra se parte a la mitad, y cada mitad se va al sobre de su dueño.
+
+**El apartado sale antes de repartir, así que lo pagan los dos.** Antes salía solo del lado de Fran —Primo
+cobraba su mitad completa y Fran financiaba la gasolina— y eso no es mitad y mitad:
+
+```
+Un lote de 18 vendido a $20 = $360, con $154 de té pagados del fondo
+
+              ANTES            AHORA
+Utilidad     $206.00          $206.00
+Gasolina           —          -$45.00   <- se aparta antes de repartir
+Gas                —          -$40.00
+Se reparte         —          $121.00
+  Fran         $0.00           $60.50
+  Primo      $103.00           $60.50
+Deuda         $93.50            $0.00
+```
+
+**La deuda no se cobra al repartir.** Sacar $154 del fondo para comprar el té y capturar el gasto de $154 es
+el mismo peso: el gasto ya bajó la utilidad de los dos, y el fondo se rellena solo con el efectivo que la
+caja retiene. Restar además una línea de "reponer" cobraba el gasto una segunda vez, y completa, a Fran.
+
+### Por qué Fran también tiene sobre
+
+Un día malo el repartible es negativo y **bajan los dos sobres**. Nadie pone dinero de su bolsa: el faltante
+queda registrado y se compensa solo el día que vuelve a haber utilidad.
+
+Antes solo Primo tenía sobre. En un día malo a Primo le bajaba el acumulado y quedaba registrado; a Fran no
+le quedaba nada registrado —se llevaba $0 y el faltante se evaporaba—, así que al día siguiente Primo
+arrancaba desde su saldo real y Fran desde cero, y Fran terminaba absorbiendo la pérdida completa.
+
+```
+Lunes:  se compra té de $154 del fondo, no se vende
+Martes: se venden $360, sin gastos nuevos
+
+Repartido bien:       $60.50 cada uno
+Sin sobre para Fran:  Primo $137.50, Fran $60.50
+```
+
+Cada quien cobra de su sobre cuando quiere, con el botón **Cobrar**. Cobrar es un pago, no un préstamo: ese
+dinero ya era suyo y sacarlo no deja deuda.
+
+Cerrar también **sella los movimientos que quedaban abiertos**: el corte guarda cómo quedó la caja, y un
+movimiento que siguiera editable después desmentiría ese registro inmutable.
 
 El corte cerrado guarda cómo quedó la caja en ese momento (`caja: { hay, deuda }`). Los cortes cerrados antes
 de que existieran los sobres traen `caja: null` y se siguen leyendo con el fondo teórico que guardaron: **no
@@ -336,7 +530,7 @@ se recalcula el pasado**.
 
 - La gasolina y el gas son **gasto el día que se pagan**, no el día que se apartan. Apartar solo mueve
   efectivo. Registrar la carga semanal como gasto *y* como apartado la contaría dos veces.
-- El **apartado por día** ($45 / $40) se edita abajo en la pantalla Corte. Cambiarlo no mueve nada cerrado.
+- El **apartado por día** ($45 / $40) se edita abajo en la pestaña Caja. Cambiarlo no mueve nada cerrado.
 - La caja escribe solo en `refreskte:caja:v1` y `refreskte:caja-tasas:v1`. No toca ventas ni cortes.
 - Los apartados del cierre llevan **id derivado de la fecha**, así que reintentar un cierre no puede apartar
   el doble.
@@ -357,6 +551,15 @@ se recalcula el pasado**.
 - **El `-1` filtra por vendedor a propósito.** Los dos venden desde el mismo teléfono y en el mismo lugar:
   sin ese filtro, corregir un toque de más de uno le quitaría una pieza al otro, y no lo avisaría nadie
   — el total del día y el dinero salen idénticos, solo cambia a quién se le acreditó.
+- **Corregir el lugar tampoco edita.** Mover una venta de punto es un `void` sobre la vieja más una venta
+  nueva con la **misma hora, cantidad, canal y vendedor**, y un campo `movedFrom` con el lugar del que vino
+  — sin él la línea nueva sería indistinguible de una venta cualquiera y el histórico no contaría el error.
+- **Corregir el lugar nunca mueve dinero.** El ingreso del corte sale de piezas × precio por canal y no
+  mira el punto, así que la corrección es segura incluso sobre una fecha con el corte ya cerrado.
+- **La corrección de turno marca el lugar a los dos y las ventas una por una.** El `shift` se escribe para
+  ambos por la misma razón que al marcar lugar en vivo (salen juntos, un solo teléfono); las ventas se
+  reacreditan por vendedor y solo las del punto que cada quien traía mal, dentro de la ventana que va de la
+  hora indicada hasta el siguiente lugar que ese vendedor marcó — más allá el registro ya decía la verdad.
 - Quitar un punto en Ajustes solo lo saca de la lista activa: sus ventas históricas siguen contando en Stats.
 - El arreglo de eventos es *append-only*; ninguna función lo muta ni lo reordena en sitio.
 
