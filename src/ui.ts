@@ -8,7 +8,7 @@ import type {
   TransferEvent,
   Vendedor,
 } from './tipos';
-import type { Barra, Hielera, Matriz, PanelVendedor, Rango, Turno } from './dominio';
+import type { Barra, Hielera, LineaConteo, Matriz, PanelVendedor, Rango, Turno } from './dominio';
 import type { Borrador, CorteCerrado, Ingreso, LineaGasto, Precios, Reparto } from './corte';
 import { calcularReparto, efectivoEsperado, importe, pesos } from './corte';
 import type {
@@ -295,11 +295,14 @@ export type PropsVender = {
   alAbrirCarga: (v: Vendedor) => void;
   alAbrirTraspaso: () => void;
   alIrA: (v: Vista) => void;
-  /** La captura principal: lugar, hora de llegada y piezas de ese rato por vendedor. */
+  /**
+   * La captura principal: lugar, hora de llegada y lo que QUEDA en cada hielera al cerrar el
+   * rato. null en un vendedor = no lo contaron, y a ese no se le registra nada.
+   */
   alRegistrarHora: (datos: {
     punto: string;
     hora: string;
-    piezas: Record<Vendedor, number>;
+    quedan: Record<Vendedor, number | null>;
   }) => void;
 };
 
@@ -440,39 +443,54 @@ function resumenDeHoy(p: PropsVender): HTMLElement | null {
 }
 
 /**
- * La captura principal: donde estuvimos, a que hora llegamos y cuantas se fueron en ese rato.
+ * Lo que el vendedor deberia traer, para ponerlo al lado del campo donde teclea lo que conto.
+ * Sin carga registrada el numero no significa nada todavia y decirlo evita teclear contra un 0.
+ */
+function pieDeConteo(h: Hielera): string {
+  if (h.sinCarga && h.vendido === 0) return 'sin carga';
+  if (h.restante < 0) return `debe ${-h.restante} de mas`;
+  return `trae ${h.restante}`;
+}
+
+/**
+ * La captura principal: donde estuvimos, a que hora llegamos y cuantas quedan en cada hielera.
  * Va arriba de todo porque es como se trabaja; tocar +1 por botella tiene friccion en la calle.
  *
- * La hora arranca en la de ahora redondeada hacia abajo, que casi siempre es la buena, y se
- * teclea encima cuando se captura un rato pasado.
+ * Se cuenta al CERRAR el rato, pero la hora que se teclea es la de llegada: las piezas se
+ * acreditan al lugar y a la franja en que de verdad se fueron, que es como se lee la cuadricula.
+ * La hora arranca en la de ahora redondeada hacia abajo y se teclea encima si se llego antes.
+ *
+ * El campo vacio no es cero: es "a este no lo conte". Por eso el placeholder es un guion y no un
+ * 0 — un 0 invitaria a dejarlo asi, y un 0 contado significa que se vendio la hielera entera.
  */
 function bloqueHora(p: PropsVender): HTMLElement {
   const lugar = selector(p.ajustes.points, turnoActual(p.eventos, p.vendedor, p.hoy)?.point ?? p.ajustes.points[0] ?? '');
   const hora = entrada('time', horaEnPunto(p.ahora));
-  const piezas = VENDEDORES.map((v) => ({
+  const conteo = VENDEDORES.map((v) => ({
     vendedor: v,
-    control: entrada('number', '', { min: '0', step: '1', inputmode: 'numeric', placeholder: '0' }),
+    pie: pieDeConteo(hieleraDe(p.eventos, v, p.hoy)),
+    control: entrada('number', '', { min: '0', step: '1', inputmode: 'numeric', placeholder: '—' }),
   }));
 
   const registrar = (): void => {
     p.alRegistrarHora({
       punto: lugar.value,
       hora: hora.value,
-      piezas: Object.fromEntries(
-        piezas.map((c) => [c.vendedor, Number(c.control.value === '' ? '0' : c.control.value)])
-      ) as Record<Vendedor, number>,
+      quedan: Object.fromEntries(
+        conteo.map((c) => [c.vendedor, c.control.value === '' ? null : Number(c.control.value)])
+      ) as Record<Vendedor, number | null>,
     });
-    for (const c of piezas) c.control.value = '';
+    for (const c of conteo) c.control.value = '';
   };
 
   return el('section', { clase: 'bloque' }, [
     el('h2', { texto: '¿Dónde y a qué hora?' }),
     el('div', { clase: 'corte-precios' }, [campo('Lugar', lugar), campo('Llegamos', hora)]),
-    el('p', { clase: 'detalle espaciado', texto: 'Piezas de ese rato' }),
+    el('p', { clase: 'detalle espaciado', texto: 'Cuenta lo que queda en la hielera' }),
     el(
       'div',
       { clase: 'corte-precios' },
-      piezas.map((c) => campo(c.vendedor, c.control))
+      conteo.map((c) => campo(`${c.vendedor} · ${c.pie}`, c.control))
     ),
     boton('Registrar', 'btn-venta espaciado', registrar),
   ]);
@@ -694,6 +712,61 @@ export function abrirCorreccionLugar(p: PropsCorregirLugar): void {
           ),
       resumen,
       el('div', { clase: 'fila-botones' }, [boton('Cancelar', 'btn', cerrar), aceptar]),
+    ])
+  );
+
+  document.body.appendChild(modal);
+  modal.addEventListener('cancel', () => modal.remove());
+  modal.showModal();
+}
+
+function textoSobrante(l: LineaConteo): string {
+  const traia = l.sinCarga ? 'no tiene carga registrada hoy' : `debería traer ${l.esperado}`;
+  return `${l.vendedor} cuenta ${l.contado ?? 0} y ${traia}: sobran ${l.sobran}.`;
+}
+
+/**
+ * Contar mas botellas de las que el sistema cree que quedan solo tiene una explicacion fisica:
+ * una carga que no se registro. La captura se detiene aqui en vez de escribir una venta negativa
+ * o tragarse el descuadre, y ofrece de un toque lo unico que lo arregla.
+ *
+ * No registra el conteo del otro vendedor tampoco: los dos numeros se teclearon juntos y se
+ * vuelven a teclear juntos: partirlos dejaria a medias una captura que el vendedor cree hecha.
+ */
+export function abrirSobranteConteo(
+  sobrantes: readonly LineaConteo[],
+  alCargar: (vendedor: Vendedor) => void
+): void {
+  const primero = sobrantes[0];
+  if (primero === undefined) return;
+  const modal = el('dialog', { attrs: { 'aria-label': 'Sobran botellas' } });
+
+  if (typeof modal.showModal !== 'function') {
+    const texto = `${sobrantes.map(textoSobrante).join('\n')}\n\n¿Registrar la carga que falta?`;
+    if (window.confirm(texto)) alCargar(primero.vendedor);
+    return;
+  }
+
+  const cerrar = (): void => {
+    modal.close();
+    modal.remove();
+  };
+
+  modal.appendChild(
+    el('div', {}, [
+      el('h2', { texto: 'Sobran botellas' }),
+      el('div', {}, sobrantes.map((l) => el('p', { texto: textoSobrante(l) }))),
+      el('p', {
+        clase: 'detalle',
+        texto: 'De la nada no salen: falta registrar una carga. Regístrala y vuelve a contar.',
+      }),
+      el('div', { clase: 'fila-botones' }, [
+        boton('Cancelar', 'btn', cerrar),
+        boton('Cargar hielera', 'btn activo', () => {
+          cerrar();
+          alCargar(primero.vendedor);
+        }),
+      ]),
     ])
   );
 

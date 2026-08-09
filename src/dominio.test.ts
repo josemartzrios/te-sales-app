@@ -31,6 +31,7 @@ import {
   porLugarYHora,
   porPunto,
   porVendedor,
+  planConteo,
   puedeAgregarPunto,
   quitarPunto,
   resumenTexto,
@@ -1376,6 +1377,92 @@ describe('planCorreccionLugar', () => {
     expect(plan?.vendedores).toEqual(['Fran', 'Primo']);
     expect(plan?.ventasMovidas).toBe(0);
     expect(plan?.eventos).toHaveLength(2);
+  });
+});
+
+// ---------- contar lo que queda en la hielera ----------
+
+describe('planConteo', () => {
+  const HOY = '2026-08-08';
+  const cargados = (fran: number, primo: number): AppEvent[] => [
+    carga({ id: 'c1', ts: `${HOY}T10:00:00`, vendor: 'Fran', qty: fran }),
+    carga({ id: 'c2', ts: `${HOY}T10:00:00`, vendor: 'Primo', qty: primo }),
+  ];
+
+  it('lo vendido es lo que falta contra lo que deberia traer', () => {
+    const plan = planConteo(cargados(20, 15), HOY, { Fran: 8, Primo: 5 });
+    expect(plan.piezas).toEqual({ Fran: 12, Primo: 10 });
+    expect(plan.total).toBe(22);
+    expect(plan.sobrantes).toEqual([]);
+  });
+
+  it('descuenta lo que ya se habia registrado antes en el dia', () => {
+    const eventos = [
+      ...cargados(20, 15),
+      venta({ id: 'v1', ts: `${HOY}T17:00:00`, vendor: 'Fran', qty: 7 }),
+    ];
+    // Fran trae 13; si cuenta 8 es que se fueron 5 mas, no 12.
+    const plan = planConteo(eventos, HOY, { Fran: 8, Primo: 15 });
+    expect(plan.piezas.Fran).toBe(5);
+    expect(plan.piezas.Primo).toBe(0);
+  });
+
+  it('el campo vacio no es cero: al que no se conto no se le registra nada', () => {
+    const plan = planConteo(cargados(20, 15), HOY, { Fran: null, Primo: 5 });
+    expect(plan.piezas).toEqual({ Fran: 0, Primo: 10 });
+    expect(plan.lineas[0]?.contado).toBeNull();
+    expect(plan.sobrantes).toEqual([]);
+  });
+
+  it('contar cero es vender la hielera entera, y eso si se registra', () => {
+    const plan = planConteo(cargados(20, 15), HOY, { Fran: 0, Primo: 15 });
+    expect(plan.piezas.Fran).toBe(20);
+  });
+
+  it('contar de mas no escribe venta negativa: lo marca como sobrante', () => {
+    const plan = planConteo(cargados(20, 15), HOY, { Fran: 24, Primo: 5 });
+    expect(plan.sobrantes.map((l) => [l.vendedor, l.sobran])).toEqual([['Fran', 4]]);
+    expect(plan.piezas.Fran).toBe(0);
+  });
+
+  it('sin carga registrada cualquier conteo sobra: falta el load', () => {
+    const plan = planConteo([], HOY, { Fran: 8, Primo: null });
+    expect(plan.sobrantes).toHaveLength(1);
+    expect(plan.lineas[0]?.sinCarga).toBe(true);
+  });
+
+  it('cuadrar exacto no registra piezas pero si deja constancia de que se conto', () => {
+    const plan = planConteo(cargados(20, 15), HOY, { Fran: 20, Primo: 15 });
+    expect(plan.total).toBe(0);
+    expect(plan.lineas.every((l) => l.contado !== null)).toBe(true);
+  });
+
+  it('las botellas que le pasaron cuentan como suyas al contar', () => {
+    const eventos = [
+      ...cargados(20, 15),
+      traspaso({ id: 't1', ts: `${HOY}T18:00:00`, from: 'Primo', to: 'Fran', qty: 5 }),
+    ];
+    // Fran trae 25 en la mano aunque solo cargo 20: contar 20 es haber vendido 5.
+    const plan = planConteo(eventos, HOY, { Fran: 20, Primo: 10 });
+    expect(plan.piezas).toEqual({ Fran: 5, Primo: 0 });
+  });
+
+  it('el mayoreo ya salio de la hielera: no se cobra dos veces', () => {
+    const eventos = [
+      ...cargados(20, 15),
+      venta({ id: 'm1', ts: `${HOY}T12:00:00`, vendor: 'Fran', channel: 'mayoreo', qty: 6 }),
+    ];
+    const plan = planConteo(eventos, HOY, { Fran: 10, Primo: null });
+    expect(plan.piezas.Fran).toBe(4);
+  });
+
+  it('solo mira el dia que se le pide', () => {
+    const eventos = [
+      ...cargados(20, 15),
+      carga({ id: 'c3', ts: '2026-08-07T10:00:00', vendor: 'Fran', qty: 30 }),
+    ];
+    const plan = planConteo(eventos, HOY, { Fran: 8, Primo: null });
+    expect(plan.piezas.Fran).toBe(12);
   });
 });
 

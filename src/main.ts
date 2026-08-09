@@ -22,6 +22,7 @@ import {
   mezclar,
   moverVenta,
   nuevoId,
+  planConteo,
   planCorreccionLugar,
   puedeAgregarPunto,
   quitarPunto,
@@ -95,6 +96,7 @@ import {
   abrirMayoreo,
   abrirMoverVenta,
   abrirRetro,
+  abrirSobranteConteo,
   abrirTraspaso,
   destacarHielera,
   enfocarGasto,
@@ -273,13 +275,14 @@ function marcarLugar(punto: string): void {
 }
 
 /**
- * La captura principal: "llegamos a la Plazuela a las cinco y se fueron doce". Escribe el turno
- * de los dos a esa hora y una venta por vendedor con lo suyo.
+ * La captura principal: "estuvimos en la Plazuela desde las cinco y quedan ocho". Cuenta lo que
+ * queda en cada hielera, `planConteo` saca lo vendido, y se escribe el turno de los dos a esa
+ * hora mas una venta por vendedor con lo suyo.
  */
 function registrarHora(datos: {
   punto: string;
   hora: string;
-  piezas: Record<Vendedor, number>;
+  quedan: Record<Vendedor, number | null>;
 }): void {
   const hoy = claveFecha(new Date());
   const ts = isoDesdeFechaYHora(hoy, datos.hora);
@@ -288,11 +291,19 @@ function registrarHora(datos: {
     return;
   }
   for (const vendedor of VENDEDORES) {
-    const qty = datos.piezas[vendedor];
-    if (!Number.isInteger(qty) || qty < 0) {
+    const cuenta = datos.quedan[vendedor];
+    if (cuenta !== null && (!Number.isInteger(cuenta) || cuenta < 0)) {
       toast('Cantidad invalida');
       return;
     }
+  }
+
+  const plan = planConteo(eventos, hoy, datos.quedan);
+  if (plan.sobrantes.length > 0) {
+    abrirSobranteConteo(plan.sobrantes, (quien) =>
+      abrirCarga(quien, (a) => hieleraDe(eventos, a, hoy), cargarHielera)
+    );
+    return;
   }
 
   const nuevos = eventosDeHora(eventos, {
@@ -300,19 +311,24 @@ function registrarHora(datos: {
     fecha: hoy,
     point: datos.punto,
     device: ajustes.deviceId,
-    piezas: datos.piezas,
+    piezas: plan.piezas,
   });
+  // Ya estaban ahi y el conteo no bajo: no hay nada que escribir, pero contar y que cuadre no es
+  // lo mismo que no haber contado, y el vendedor necesita ver la diferencia.
   if (nuevos.length === 0) {
-    toast('Nada que registrar');
+    toast(
+      plan.lineas.every((l) => l.contado === null)
+        ? 'Nada que registrar'
+        : `${datos.punto} ${datos.hora} · sin ventas`
+    );
     return;
   }
   if (!aplicarEventos([...eventos, ...nuevos])) return;
 
-  const total = VENDEDORES.reduce((suma, v) => suma + (datos.piezas[v] ?? 0), 0);
   toast(
-    total === 0
+    plan.total === 0
       ? `${datos.punto} · ${datos.hora}`
-      : `${datos.punto} ${datos.hora} · ${total} pieza${total === 1 ? '' : 's'}`
+      : `${datos.punto} ${datos.hora} · ${plan.total} pieza${plan.total === 1 ? '' : 's'}`
   );
   render();
   destacarHielera();

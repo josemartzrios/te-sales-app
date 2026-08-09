@@ -126,8 +126,8 @@ export function crearVenta(entrada: {
  * Lo que escribe registrar de un jalon lo vendido en un rato: el turno de los dos a la hora que
  * se declara, y una venta por vendedor con lo que le toco.
  *
- * Nace de que tocar +1 por botella tiene friccion en la calle. Es mas facil acordarse de a que
- * hora llegamos y cuantas se fueron en esa hora, y eso es exactamente lo que se teclea.
+ * Nace de que tocar +1 por botella tiene friccion en la calle. Las piezas ya no se teclean: se
+ * cuenta lo que queda en la hielera y `planConteo` saca la resta. Aqui llegan ya en piezas.
  *
  * Las piezas se capturan POR VENDEDOR y no juntas a proposito: la hielera, el cuadre del dia y
  * las stats por persona viven de saber quien vendio que. Partir un total a la mitad inventaria
@@ -180,6 +180,77 @@ export function eventosDeHora(
   }
 
   return salida;
+}
+
+/** Lo que un vendedor cuenta en su hielera al cerrar el rato, contra lo que el sistema creia. */
+export type LineaConteo = {
+  vendedor: Vendedor;
+  /** Lo que deberia traer segun sus cargas, sus traspasos y lo ya registrado como vendido. */
+  esperado: number;
+  /** Lo que conto. null = no lo conto, y entonces a su hielera no se le toca nada. */
+  contado: number | null;
+  /** Las que se fueron en el rato: esperado - contado. Nunca negativo. */
+  piezas: number;
+  /** Las que cuenta de mas: contado - esperado. 0 en el caso normal. */
+  sobran: number;
+  /** Sin carga ni traspaso recibido, `esperado` no significa nada todavia. */
+  sinCarga: boolean;
+};
+
+export type PlanConteo = {
+  lineas: LineaConteo[];
+  /**
+   * Los que cuentan mas botellas de las que deberian traer. Fisicamente eso no sale de la nada:
+   * es una carga que no se registro. No se resuelve solo porque nadie sabe cuantas ni a que hora
+   * entraron, asi que el plan las senala y la captura se detiene ahi.
+   */
+  sobrantes: LineaConteo[];
+  piezas: Record<Vendedor, number>;
+  total: number;
+};
+
+/**
+ * Traduce "quedan 8 en la hielera" a "se vendieron 12", que es lo que el historico guarda.
+ *
+ * Contar lo que queda es mas facil que ir tocando +1 por botella, y es la operacion inversa de
+ * la hielera: si `restante` sale de restarle lo vendido a lo cargado, entonces lo vendido sale
+ * de restarle lo contado a `restante`.
+ *
+ * Ojo con lo que esto implica y con +1 no pasaba: **todo lo que salio de la hielera cuenta como
+ * venta**. Una botella rota o regalada baja el conteo igual que una vendida, se va a cobrar en el
+ * ingreso esperado del corte y ahi va a aparecer como faltante de efectivo.
+ *
+ * El campo vacio (null) NO es cero: es "a este no lo conte". Tratarlo como cero registraria la
+ * hielera entera como vendida de un tecleo.
+ */
+export function planConteo(
+  eventos: readonly AppEvent[],
+  clave: string,
+  contado: Readonly<Record<Vendedor, number | null>>
+): PlanConteo {
+  const lineas = VENDEDORES.map((vendedor): LineaConteo => {
+    const h = hieleraDe(eventos, vendedor, clave);
+    const cuenta = contado[vendedor];
+    const diferencia = cuenta === null ? 0 : h.restante - cuenta;
+    return {
+      vendedor,
+      esperado: h.restante,
+      contado: cuenta,
+      piezas: Math.max(0, diferencia),
+      sobran: Math.max(0, -diferencia),
+      sinCarga: h.sinCarga,
+    };
+  });
+
+  return {
+    lineas,
+    sobrantes: lineas.filter((l) => l.sobran > 0),
+    piezas: Object.fromEntries(lineas.map((l) => [l.vendedor, l.piezas])) as Record<
+      Vendedor,
+      number
+    >,
+    total: lineas.reduce((s, l) => s + l.piezas, 0),
+  };
 }
 
 /** Marcar lugar no registra ninguna pieza: solo dice donde esta parado el vendedor desde esa hora. */

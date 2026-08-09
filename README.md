@@ -33,22 +33,31 @@ app no muestra el botón, porque no sabría a dónde acreditar la pieza. Y arrib
 
 ### 3. Vender
 
-Arriba de **Vender** está el registro por rato, que es como se trabaja: **lugar**, **hora de llegada** y las
-**piezas de ese rato, una cifra por vendedor**. Un solo *Registrar* y queda.
+Arriba de **Vender** está el registro por rato, que es como se trabaja: **lugar**, **hora de llegada** y
+**cuántas botellas quedan en cada hielera**. No se teclea lo vendido: se cuenta lo que sobra, que es más
+fácil de hacer en la calle. Un solo *Registrar* y queda.
 
 ```
 ¿Dónde y a qué hora?
 Lugar    [ Plazuela   v ]
 Llegamos [ 17:00        ]
 
-Piezas de ese rato
-Fran  [ 7 ]   Primo [ 5 ]
+Cuenta lo que queda en la hielera
+Fran · trae 20  [ 8 ]   Primo · trae 15  [ 5 ]
 
 [        Registrar        ]
 ```
 
-Eso escribe el turno de los dos a esa hora y una venta por vendedor. La hora arranca en la de ahora en punto
-y se teclea encima cuando se captura un rato que ya pasó.
+La app hace la resta: Fran traía 20 y quedan 8, **se fueron 12**. Eso escribe el turno de los dos a esa hora
+y una venta por vendedor con lo suyo. Es la operación inversa de la hielera — si el restante sale de restarle
+lo vendido a lo cargado, lo vendido sale de restarle lo contado al restante.
+
+**Se cuenta al cerrar el rato, pero la hora que se teclea es la de llegada.** Así las piezas caen en el lugar
+y en la franja en que de verdad se fueron, que es como se lee la cuadrícula de lugar × hora. La hora arranca
+en la de ahora en punto y se teclea encima si se llegó antes.
+
+**El campo vacío no es cero: es "a este no lo conté"**, y a ese vendedor no se le registra nada. Un `0`
+tecleado sí cuenta, y significa que vendió la hielera entera. Por eso el campo vacío muestra un guion.
 
 **Las piezas se capturan por vendedor, no juntas.** La hielera, el cuadre del día y las stats por persona
 viven de saber quién vendió qué; partir un total a la mitad inventaría un dato que nadie contó y haría que el
@@ -56,6 +65,20 @@ cuadre marcara rojo sin que hubiera error.
 
 **Registrar dos horas del mismo lugar no parte el turno en dos**: es un solo rato ahí, y las piezas caen en
 su franja. Cambiar de lugar sí abre turno nuevo.
+
+#### Si cuentas más botellas de las que deberías traer
+
+Físicamente eso no sale de la nada: es una carga que no se registró. La captura **se detiene** y lo dice —
+*"Fran cuenta 12 y debería traer 8: sobran 4"* — con un botón para abrir **Cargar hielera** ahí mismo.
+Registras las que faltan y vuelves a contar. No se escribe nada a medias: los dos números se tecleron juntos
+y se vuelven a teclear juntos.
+
+#### Lo que esto implica y con el `+1` no pasaba
+
+**Todo lo que salió de la hielera cuenta como venta.** Una botella rota, regalada o que se llevó alguien baja
+el conteo igual que una vendida, así que se va a cobrar en el ingreso esperado del Corte y ahí va a aparecer
+como **faltante de efectivo**. Es el precio de no ir tocando `+1` por botella; si empieza a pasar seguido,
+el arreglo es un campo de "no cobradas" junto al conteo.
 
 ### Contar en vivo
 
@@ -214,8 +237,8 @@ Son seis pantallas y una barra de teléfono: con las seis abajo, cada botón baj
 más larga apenas cabía, y *Ajustes* —que se toca una vez al mes— pesaba lo mismo que *Vender*. Lo de a
 diario tiene que ser lo que se ve.
 
-- **Vender** — el caso común. Arriba, el registro por rato: lugar, hora de llegada y las piezas de ese rato
-  por vendedor, en un solo *Registrar*. Debajo, el conteo en vivo: la tarjeta del turno y el botón grande
+- **Vender** — el caso común. Arriba, el registro por rato: lugar, hora de llegada y lo que queda en cada
+  hielera, en un solo *Registrar*. Debajo, el conteo en vivo: la tarjeta del turno y el botón grande
   `+1 · Fran` para las veces que se quiera contar botella por botella. También se carga la hielera y se
   pasan botellas de una a otra desde aquí.
 - **Hoy** — el tablero del día por vendedor: en hielera, vendió, ritmo por hora, mejor lugar y mejor hora,
