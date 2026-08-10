@@ -1,9 +1,9 @@
 import type { AppEvent, Settings } from './tipos';
 import type { Borrador, CorteCerrado, Precios } from './corte';
-import type { MovimientoCaja, Tasas } from './caja';
+import type { MovimientoCaja } from './caja';
 import { nuevoDeviceId, planRespaldo, validarAjustes, validarEvento } from './dominio';
 import { PRECIOS_INICIALES, validarBorrador, validarCorte, validarPrecios } from './corte';
-import { TASAS_INICIALES, validarMovimiento, validarTasas } from './caja';
+import { validarMovimiento } from './caja';
 
 // Unico modulo que toca localStorage. Cambiar a sync remoto se hace aqui adentro.
 
@@ -19,7 +19,8 @@ const CLAVE_PRECIOS = 'refreskte:corte-precios:v1';
 
 // Claves de la caja (sobres y movimientos). Tambien propias: no pisan nada de lo anterior.
 const CLAVE_CAJA = 'refreskte:caja:v1';
-const CLAVE_TASAS = 'refreskte:caja-tasas:v1';
+// 'refreskte:caja-tasas:v1' quedo huerfana: el apartado se captura en el borrador del dia. No
+// se borra al arrancar —no se toca lo que uno no escribe— pero ya nadie la lee.
 
 export type Lectura<T> = { datos: T; aviso: string | null };
 
@@ -198,17 +199,3 @@ export function escribirMovimientos(movimientos: readonly MovimientoCaja[]): str
   return escribir(CLAVE_CAJA, movimientos);
 }
 
-export function leerTasas(): Tasas {
-  const crudo = leerCrudo(CLAVE_TASAS);
-  if (crudo === null) return { ...TASAS_INICIALES };
-  try {
-    return validarTasas(JSON.parse(crudo));
-  } catch {
-    respaldar(CLAVE_TASAS, crudo);
-    return { ...TASAS_INICIALES };
-  }
-}
-
-export function escribirTasas(tasas: Tasas): string | null {
-  return escribir(CLAVE_TASAS, tasas);
-}

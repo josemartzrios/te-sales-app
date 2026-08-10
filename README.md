@@ -127,8 +127,9 @@ Para comparar días o buscar la mejor hora de cada lugar, **`⋯` → Stats** �
 
 En **Corte**, el ingreso del día ya viene sumado de las ventas (calle × $20, mayoreo × $14), desglosado por
 canal para validarlo de un vistazo contra el efectivo real. Se capturan los gastos línea por línea
-(concepto + monto) y abajo, en un solo bloque, baja el desglose completo: ingreso, gastos del día, gasolina
-y gas, y lo que queda para repartir mitad y mitad.
+(concepto + de qué sobre salió + monto), abajo se teclea lo que **se aparta hoy** para la gasolina del
+domingo —vacío el día que no se aparte nada— y al final, en un solo bloque, baja el desglose completo:
+ingreso, gastos del día, lo apartado, y lo que queda para repartir mitad y mitad.
 
 Después, **Al cerrar** dice lo único que hay que ejecutar: cuánto efectivo debería haber en el bulto,
 para compararlo contra el bulto. Ese número sale de cómo está la caja, y **Ver la caja** lleva directo a la
@@ -245,11 +246,12 @@ diario tiene que ser lo que se ve.
   la lista de turnos con su franja y su ritmo, más las barras por lugar y por hora de esa persona. Abajo,
   el registro de movimientos (ventas, cargas, lugares y traspasos) con su botón de anular, y la captura
   retroactiva.
-- **Corte** — el cierre del día en dinero: ingreso calculado de las ventas, gastos capturados a mano,
-  utilidad y reparto 50/50. Cerrar el corte lo vuelve un registro inmutable.
+- **Corte** — el cierre del día en dinero: ingreso calculado de las ventas, gastos capturados a mano, lo que
+  se aparta ese día para la gasolina, utilidad y reparto 50/50. Cerrar el corte lo vuelve un registro
+  inmutable.
 - **Caja** — dónde está el dinero: los seis sobres, lo que se le debe a la caja, la captura de movimientos
   (sobre + cantidad + concepto, Entró o Salió) y el historial. Abajo, el **arqueo** (contar el bulto contra
-  el libro), el **cierre semanal** del domingo y el apartado por día de venta.
+  el libro) y el **cierre semanal** del domingo.
 - **Stats** (en el `⋯`) — historia: rango (hoy / 7 días / todo), vendedor (ambos / Fran / Primo) y canal.
   Arriba de todo, la cuadrícula **lugar × hora**: dónde y a qué hora se vende.
 - **Ajustes** (en el `⋯`) — solo configuración: lugares, vendedor por defecto y respaldo.
@@ -347,7 +349,8 @@ Fran = Primo = utilidad ÷ 2
 - **Se guarda el snapshot, no una referencia.** El corte congela las piezas, los precios, los gastos y el
   reparto resultante. Si mañana se anula una venta de ayer, el corte de ayer no se mueve un centavo. Al
   leerlo tampoco se recalcula nada: recalcular es justo lo que un registro inmutable no debe permitir.
-- El **borrador** del día en curso sí es editable, uno por fecha, y se descarta al cerrar.
+- El **borrador** del día en curso sí es editable, uno por fecha, y se descarta al cerrar. Guarda los gastos
+  capturados y lo que se aparta ese día para la gasolina. Un borrador viejo sin ese campo se lee en cero.
 - Toda lectura es defensiva: con el JSON corrupto la app arranca vacía, respalda el crudo y no borra nada.
 
 ### Fuera de alcance del corte
@@ -360,9 +363,10 @@ cerrados.
 El corte responde *cuánto ganamos*. La caja responde *dónde está el dinero y de quién es*. Son **dos libros
 distintos a propósito**, y mezclarlos es el error que cuesta dinero de verdad.
 
-El ritmo de la semana: **los gastos se cubren con el fondo**; si no alcanza, se toma prestado de lo apartado
-para gasolina. Cada corte del día abona a esa deuda lo que alcance. **El domingo** se carga gasolina, se le
-paga el gas a Mamá Juani y su sueldo a Primo, y el fondo vuelve a sus $200.
+El ritmo de la semana: **los insumos se cubren con el fondo**, y cada corte del día abona a esa deuda lo que
+alcance. **A Mamá Juani se le paga cada dos lotes** con el efectivo de la venta de ese día —el mismo día si
+salen dos, o al siguiente— así que eso es un gasto del corte y no toca la caja. **El domingo** se carga
+gasolina con lo apartado y se le paga su sueldo a Primo.
 
 El dinero de la caja vive en seis **sobres**. No son bolsas físicas separadas —el efectivo es un solo
 bulto— sino a quién le toca cada peso:
@@ -371,8 +375,8 @@ bulto— sino a quién le toca cada peso:
 | --- | --- | --- | --- |
 | Fondo | $200 rotatorio | fijo, no crece | solo si se toma prestado |
 | Cambio | $120 rotatorio | fijo, no crece | solo si se toma prestado |
-| Gasolina | provisión | $45 por día de venta | al cargar gasolina |
-| Gas (Mamá Juani) | provisión | $40 por día de venta | al pagarle |
+| Gasolina | provisión | lo que se teclee en el corte del día | al cargar gasolina el domingo |
+| Gas (Mamá Juani) | histórico | ya no se llena: se le paga de la venta del día | al vaciarlo el domingo |
 | Lo tuyo (Fran) | pasivo | su mitad de cada corte cerrado | al cobrarlo |
 | Sueldo de Primo | pasivo | su mitad de cada corte cerrado | al pagarle el domingo |
 
@@ -407,21 +411,23 @@ ese sobre *debería* tener:
 
 | Movimiento | Efectivo | Debería haber | Ejemplo |
 | --- | --- | --- | --- |
-| Aparté | + | + | se guardan los $45 del día para gasolina |
-| Pagué | − | − | se carga gasolina, se le paga a Primo |
+| Aparté | + | + | se guarda para gasolina lo que se apartó ese día |
+| Pagué | − | − | se carga gasolina el domingo, se le paga su sueldo a Primo |
 | Tomé prestado | − | = | sale dinero del fondo para insumos → **deuda** |
 | Devolví | + | = | se regresa con lo que se vendió → **deuda** |
 
-**Lo que tecleas a mano siempre es uno de los dos últimos.** *Salió* deja deuda, *Entró* la salda — en
-cualquier sobre, sin excepción. Los gastos se cubren con el fondo y, si no alcanza, se toma prestado de lo
-apartado para gasolina; ese faltante tiene que aparecer como deuda o el domingo no alcanza para cargar.
+**Lo que tecleas en la pantalla Caja siempre es uno de los dos últimos.** *Salió* deja deuda, *Entró* la
+salda — en cualquier sobre, sin excepción.
 
-**Apartar y pagar no se teclean: los escriben los cierres**, que son los que conocen la regla.
+**Apartar y pagar no se teclean ahí: los escriben los cierres y los gastos del corte**, que son los que
+conocen la regla. Cuánto se aparta sí se teclea, pero en el corte del día: es una cifra del día, no un
+movimiento de caja suelto.
 
 | Quién | Cuándo | Qué escribe |
 | --- | --- | --- |
-| Corte del día | al cerrar | aparta a gasolina, gas y sueldo de Primo |
-| Cierre semanal | el domingo | paga esos tres y los deja en cero |
+| Gasto del corte | al capturarlo | saca como préstamo del sobre que elegiste, o nada si no salió de la caja |
+| Corte del día | al cerrar | aparta a gasolina lo capturado ese día, y su mitad a cada socio |
+| Cierre semanal | el domingo | paga gasolina, gas y sueldo de Primo, y los deja en cero |
 
 Por eso la captura son dos botones y no cuatro: *"saqué 18 de la gasolina para las botellas"* y *"cargué
 gasolina el domingo"* son dinero saliendo del mismo sobre, y por el signo son idénticos. Lo que los separa es
@@ -454,23 +460,42 @@ Los $200 prestados ya van dentro del gasto de $218; restarlos también del saldo
 el bulto. Se asume que **todo préstamo termina en un gasto del negocio**, que es como se opera.
 
 La única salida que sí se resta aparte es el **sueldo de Primo**: su mitad ya salió de la utilidad el día que
-se ganó, así que pagársela mueve efectivo sin volver a costar. La gasolina y el gas no entran ahí porque el
-día que se pagan también se capturan como gasto.
+se ganó, así que pagársela mueve efectivo sin volver a costar. La gasolina y el gas no entran ahí: cuando se
+pagan desde el corte llevan detrás su línea de gasto, que ya bajó la utilidad.
 
-### Los gastos salen solos de la caja
+### De qué sobre sale el efectivo de un gasto
 
-Capturar un gasto en el corte **descuenta el efectivo de la caja automáticamente**, en el orden en que se
-opera: primero el **fondo** y, si no alcanza, lo apartado para **gasolina**. No hay que anotarlo dos veces.
+Al capturar un gasto en el corte se elige en **Sale de** de dónde salió el efectivo, y la caja se descuenta
+sola. No hay que anotarlo dos veces.
 
-- **Borrar el gasto devuelve el efectivo.** Las dos libretas no se separan.
-- **El cambio nunca paga gastos**: es para dar cambio, no para comprar.
-- **Nunca saca de un sobre más de lo que tiene.** Si el fondo trae $46 y el gasto es $100, salen $46 del
-  fondo y $54 de la gasolina. Si entre los dos no alcanza, **el resto no se registra en la caja**: ese dinero
-  salió de la venta del día o de una bolsa, no de la caja, y anotarlo inventaría efectivo que nunca tuvo. El
-  gasto sí cuenta completo en el corte, que es lo que decide la utilidad.
+| Sale de | Qué significa |
+| --- | --- |
+| **Fondo** (por defecto) | los insumos. Hay que reponerlo → **deja deuda** |
+| **Gasolina** | se echó mano de lo apartado para comprar. Hay que reponerlo → **deja deuda** |
+| **No salió de la caja** | se pagó con el efectivo de la venta: **la caja no se mueve**. Aquí va Mamá Juani |
+
+Antes no se preguntaba: **todo gasto vaciaba el fondo** y solo caía a la gasolina cuando el fondo ya no daba.
+Pagarle a Mamá Juani con el efectivo de la venta dejaba al fondo debiendo $40 que nunca salieron de ahí. El
+fondo es para insumos.
+
+- **Sacar de un sobre siempre deja deuda**, sea el fondo o la gasolina: el gasto ya bajó la utilidad de los
+  dos y la caja se rellena sola con el efectivo que retiene al cerrar. Pagar la gasolina del domingo no es
+  esto: eso lo hace el cierre semanal, y por eso no se captura como gasto.
+- **Borrar el gasto devuelve el efectivo** a su sobre. Las dos libretas no se separan.
+- **El cambio no se ofrece**: es para dar cambio, no para comprar. **El gas tampoco**: a Mamá Juani se le
+  paga de la venta del día.
+- **Nunca saca de un sobre más de lo que tiene**, y no se derrama a otro. Si el fondo trae $46 y el gasto es
+  $100, salen $46 y **el resto no se registra en la caja**: ese dinero salió de la venta del día o de una
+  bolsa, y anotarlo inventaría efectivo que la caja nunca tuvo. El gasto sí cuenta completo en el corte, que
+  es lo que decide la utilidad.
 - Estos movimientos **nacen sellados**: se corrigen borrando o reescribiendo el gasto, que es de donde
   salieron. Dejarlos editables por su lado permitiría que el corte y la caja dijeran cosas distintas del
   mismo peso.
+
+> **Lo apartado no se captura además como gasto.** Lo que apartas ya bajó el repartible el día que lo
+> apartaste; capturar el pago como gasto lo bajaría otra vez. Por eso la gasolina se paga por el **cierre del
+> domingo** y no se teclea como gasto, y por eso el gas de Mamá Juani —que sí es gasto el día que se le
+> paga— **no se aparta**.
 
 ### El arqueo: contar el bulto contra el libro
 
@@ -500,20 +525,27 @@ que vuelvan a llenarse la semana que entra.
 
 **Se paga todo y se reparte lo que queda**, en ese orden, que es como se opera con la mano:
 
-1. La utilidad ya trae restados los gastos del día (el corte la calculó).
-2. De ahí se apartan $45 de gasolina y $40 de gas. Si no alcanza, se aparta lo que haya.
+1. La utilidad ya trae restados los gastos del día (el corte la calculó, y ahí va el gas de Mamá Juani los
+   días que se le paga).
+2. De ahí se aparta la gasolina **que se capturó en el corte de ese día**. Nada por defecto: sin captura no
+   se aparta nada, y lo tecleado no se recorta aunque pase de la utilidad.
 3. Lo que sobra se parte a la mitad, y cada mitad se va al sobre de su dueño.
+
+Antes ese monto salía de una tarifa fija ($45 de gasolina y $40 de gas cada día que hubiera ventas), y eso
+apartaba los días que no se cargó gasolina y apartaba de menos los días que se cargó más. Lo que se aparta es
+lo que se deja en la caja con la mano, así que se teclea. Y el gas salió del apartado por completo: **a Mamá
+Juani se le paga cada dos lotes** con el efectivo de ese día, así que es un gasto del corte y nada más.
 
 **El apartado sale antes de repartir, así que lo pagan los dos.** Antes salía solo del lado de Fran —Primo
 cobraba su mitad completa y Fran financiaba la gasolina— y eso no es mitad y mitad:
 
 ```
 Un lote de 18 vendido a $20 = $360, con $154 de té pagados del fondo
+y ese día se apartaron $85 para la gasolina
 
               ANTES            AHORA
 Utilidad     $206.00          $206.00
-Gasolina           —          -$45.00   <- se aparta antes de repartir
-Gas                —          -$40.00
+Se apartó          —          -$85.00   <- capturado, se aparta antes de repartir
 Se reparte         —          $121.00
   Fran         $0.00           $60.50
   Primo      $103.00           $60.50
@@ -551,10 +583,13 @@ El corte cerrado guarda cómo quedó la caja en ese momento (`caja: { hay, deuda
 de que existieran los sobres traen `caja: null` y se siguen leyendo con el fondo teórico que guardaron: **no
 se recalcula el pasado**.
 
-- La gasolina y el gas son **gasto el día que se pagan**, no el día que se apartan. Apartar solo mueve
-  efectivo. Registrar la carga semanal como gasto *y* como apartado la contaría dos veces.
-- El **apartado por día** ($45 / $40) se edita abajo en la pestaña Caja. Cambiarlo no mueve nada cerrado.
-- La caja escribe solo en `refreskte:caja:v1` y `refreskte:caja-tasas:v1`. No toca ventas ni cortes.
+- **El gas de Mamá Juani es gasto el día que se le paga** (cada dos lotes), y no se aparta. **La gasolina se
+  aparta** y se paga sola en el cierre del domingo, así que esa nunca se captura como gasto. Poner cualquiera
+  de las dos en los dos lados la contaría dos veces.
+- Lo apartado se teclea **en el corte de cada día** y se guarda en su borrador, junto con los gastos. Vacío
+  cuenta como cero: hoy no se apartó nada. Se guarda con su botón, como los precios.
+- La caja escribe solo en `refreskte:caja:v1`. No toca ventas ni cortes. (`refreskte:caja-tasas:v1`, donde
+  vivía la tarifa fija, quedó huérfana: ya nadie la lee ni la escribe.)
 - Los apartados del cierre llevan **id derivado de la fecha**, así que reintentar un cierre no puede apartar
   el doble.
 

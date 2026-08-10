@@ -9,7 +9,15 @@ import type {
   Vendedor,
 } from './tipos';
 import type { Barra, Hielera, LineaConteo, Matriz, PanelVendedor, Rango, Turno } from './dominio';
-import type { Borrador, CorteCerrado, Ingreso, LineaGasto, Precios, Reparto } from './corte';
+import type {
+  Apartado,
+  Borrador,
+  CorteCerrado,
+  Ingreso,
+  LineaGasto,
+  Precios,
+  Reparto,
+} from './corte';
 import { calcularReparto, efectivoEsperado, importe, pesos } from './corte';
 import type {
   EstadoCaja,
@@ -18,12 +26,12 @@ import type {
   PlanSemana,
   SaldoSobre,
   Sobre,
-  Tasas,
 } from './caja';
 import {
   NOMBRE_SOBRE,
   SIGNOS,
   SOBRES,
+  SOBRES_DE_GASTO,
   SOBRES_SOCIOS,
   movimientosRecientes,
   planCaja,
@@ -1540,11 +1548,12 @@ export type PropsCorte = {
    * detras. Es lo que se suma a la utilidad para contar el bulto; ver `cajaParaEsperado`.
    */
   cajaAlAbrir: number;
-  /** Tasas de apartado. Tambien de solo lectura aqui; se editan en la pestaña Caja. */
-  tasas: Tasas;
   alCambiarFecha: (f: string) => void;
-  alAgregarGasto: (concepto: string, monto: string) => void;
+  /** `origen` null = no salio de la caja: se pago con el efectivo del dia o de una bolsa. */
+  alAgregarGasto: (concepto: string, monto: string, origen: Sobre | null) => void;
   alQuitarGasto: (id: string) => void;
+  /** Lo que se aparta hoy para la gasolina del domingo. Vacio cuenta como cero. */
+  alCambiarApartado: (gasolina: string) => void;
   alCambiarPrecios: (calle: string, mayoreo: string) => void;
   alCerrar: () => void;
   alCopiar: () => void;
@@ -1594,6 +1603,30 @@ function bloqueIngreso(ingreso: Ingreso, precios: Precios): HTMLElement {
   ]);
 }
 
+/** El valor de "no salió de la caja". Vacio y no un sobre: no hay efectivo que mover. */
+const ORIGEN_FUERA = '';
+
+/**
+ * De que sobre salio el efectivo de un gasto. Arranca en el fondo, que es el caso de todos los
+ * dias —los insumos—, pero el gas de Mama Juani se paga con el efectivo de la venta y ese no
+ * mueve la caja. Antes no se preguntaba y todo vaciaba el fondo.
+ */
+function selectorOrigen(): HTMLSelectElement {
+  const valores = [...SOBRES_DE_GASTO, ORIGEN_FUERA];
+  const control = selector(valores, SOBRES_DE_GASTO[0] ?? ORIGEN_FUERA);
+  const opciones = control.querySelectorAll('option');
+  valores.forEach((v, i) => {
+    const opcion = opciones[i];
+    if (opcion === undefined) return;
+    opcion.textContent = v === ORIGEN_FUERA ? 'No salió de la caja' : NOMBRE_SOBRE[v as Sobre];
+  });
+  return control;
+}
+
+function leerOrigen(control: HTMLSelectElement): Sobre | null {
+  return control.value === ORIGEN_FUERA ? null : (control.value as Sobre);
+}
+
 /** alQuitar null = corte cerrado: se listan igual pero sin manera de tocarlos. */
 function listaGastos(
   gastos: readonly LineaGasto[],
@@ -1609,6 +1642,40 @@ function listaGastos(
       alQuitar === null ? null : boton('Borrar', 'btn peligro', () => alQuitar(g.id)),
     ])
   );
+}
+
+/**
+ * Lo que se aparta hoy para cargar gasolina el domingo.
+ *
+ * Se teclea cada dia y arranca vacio a proposito: antes salia de una tarifa fija que apartaba
+ * los dias que no se cargo nada y apartaba de menos los dias que se cargo mas. Lo que se aparta
+ * es lo que Fran deja en la caja con la mano, y eso solo lo sabe el.
+ *
+ * El gas de Mama Juani no esta aqui: se le paga cada dos lotes con el efectivo de ese dia, asi
+ * que va como un gasto mas. Ponerlo en los dos lados lo cobraria dos veces.
+ *
+ * Se guarda con su boton, como los precios: lo tecleado sin guardar no entra al corte. El
+ * dialogo de cerrar vuelve a decir cuanto se aparta, antes de que sea irreversible.
+ */
+function bloqueApartado(apartado: Apartado, alCambiar: (gasolina: string) => void): HTMLElement {
+  // Cero se pinta como campo vacio, no como '0.00': lo que no se aparto no se teclea.
+  const gasolina = entradaMonto(apartado.gasolina === 0 ? '' : pesos(apartado.gasolina));
+  const guardar = (): void => alCambiar(gasolina.value);
+  gasolina.addEventListener('keydown', (evento) => {
+    if (evento.key === 'Enter') guardar();
+  });
+
+  return el('section', { clase: 'bloque' }, [
+    el('h2', { texto: 'Se aparta hoy' }),
+    el('p', {
+      clase: 'detalle',
+      texto:
+        'Lo que hoy dejas guardado en la caja para cargar gasolina el domingo. Déjalo vacío el ' +
+        'día que no apartes nada. Sale de la utilidad antes de partir a la mitad: lo pagan los dos.',
+    }),
+    campo(NOMBRE_SOBRE.gasolina, gasolina),
+    boton('Guardar lo apartado', 'btn bloque-completo espaciado', guardar),
+  ]);
 }
 
 /**
@@ -1650,12 +1717,13 @@ function contenidoUtilidad(
     lineaDinero('Gastos del día', -reparto.gastos),
     reparto.reponerCaja === 0 ? null : lineaDinero('Reponer caja', -reparto.reponerCaja),
     reparto.ajustes === 0 ? null : lineaDinero('Ajustes', reparto.ajustes),
-    // Con el desglose por sobre cuando lo hay; el corte ya cerrado solo guardo el total.
+    // Con el desglose por sobre cuando lo hay; el corte ya cerrado solo guardo el total, y los
+    // de antes de esta regla lo traen con la gasolina y el gas juntos: por eso el rotulo neutro.
     ...(apartados.length > 0
       ? apartados.map((a) => lineaDinero(NOMBRE_SOBRE[a.sobre], -a.centavos))
       : reparto.apartado === 0
         ? []
-        : [lineaDinero('Gasolina y gas', -reparto.apartado)]),
+        : [lineaDinero('Se apartó', -reparto.apartado)]),
     lineaDinero('Se reparte', reparto.repartible, 'corte-total'),
     tarjetasSocios(reparto.fran, reparto.primo),
     pie,
@@ -1683,7 +1751,6 @@ export type PropsCaja = {
   /** Estado de la caja ahora mismo, no al cierre: se repinta con cada movimiento. */
   caja: EstadoCaja;
   movimientos: readonly MovimientoCaja[];
-  tasas: Tasas;
   /** Lo que pagaria cerrar la semana hoy. */
   semana: PlanSemana;
   alMover: (captura: CapturaCaja) => void;
@@ -1693,7 +1760,6 @@ export type PropsCaja = {
   alCerrarSemana: () => void;
   /** Sacar de su sobre lo que un socio ya tiene ganado. */
   alCobrar: (sobre: Sobre) => void;
-  alCambiarTasas: (gasolina: string, gas: string) => void;
   alCopiar: () => void;
   alIrA: (v: Vista) => void;
 };
@@ -1922,8 +1988,6 @@ function bloqueSemana(plan: PlanSemana, alCerrar: () => void): HTMLElement {
 
 export function vistaCaja(p: PropsCaja): HTMLElement {
   const faltantes = sobresEnDeuda(p.caja);
-  const tasaGasolina = entradaMonto(pesos(p.tasas.gasolina));
-  const tasaGas = entradaMonto(pesos(p.tasas.gas));
 
   return el('div', {}, [
     // La frase va debajo y no de dato de cabecera: es una linea entera, y apretada contra el
@@ -1952,8 +2016,8 @@ export function vistaCaja(p: PropsCaja): HTMLElement {
         clase: 'detalle',
         texto:
           'Sacar de cualquier sobre queda como deuda hasta que lo devuelvas — del fondo o de ' +
-          'la gasolina, da igual. Pagar la gasolina y el sueldo es el cierre del domingo, no ' +
-          'esto. Nada de aquí toca la utilidad.',
+          'la gasolina, da igual. Pagar lo apartado no es esto: eso sale del gasto que capturas ' +
+          'en el corte o del cierre del domingo. Nada de aquí toca la utilidad.',
       }),
       capturaCaja(p.alMover),
     ]),
@@ -1972,24 +2036,6 @@ export function vistaCaja(p: PropsCaja): HTMLElement {
         p.movimientos,
         (m) => abrirEdicionCaja(m, (captura) => p.alEditar(m.id, captura)),
         p.alBorrar
-      ),
-    ]),
-
-    el('div', { clase: 'separador' }),
-    el('section', { clase: 'bloque' }, [
-      el('h3', { texto: 'Apartado por día de venta' }),
-      el('p', {
-        clase: 'detalle',
-        texto:
-          'Lo que se guarda en la caja cada día que se vende, al cerrar el corte. No es gasto: ' +
-          'el gasto entra el día que se paga la gasolina o el gas.',
-      }),
-      el('div', { clase: 'corte-precios' }, [
-        campo('Gasolina', tasaGasolina),
-        campo('Gas (Mamá Juani)', tasaGas),
-      ]),
-      boton('Guardar apartado', 'btn bloque-completo', () =>
-        p.alCambiarTasas(tasaGasolina.value, tasaGas.value)
       ),
     ]),
   ]);
@@ -2098,8 +2144,9 @@ export function vistaCorte(p: PropsCorte): HTMLElement {
     id: ID_CONCEPTO,
   });
   const monto = entradaMonto('');
+  const origen = selectorOrigen();
   const agregar = (): void => {
-    p.alAgregarGasto(concepto.value, monto.value);
+    p.alAgregarGasto(concepto.value, monto.value, leerOrigen(origen));
   };
   for (const control of [concepto, monto]) {
     control.addEventListener('keydown', (evento) => {
@@ -2113,8 +2160,7 @@ export function vistaCorte(p: PropsCorte): HTMLElement {
   const plan = planCaja({
     utilidad: utilidadSola.utilidad,
     deuda: p.caja.deuda,
-    tasas: p.tasas,
-    huboVentas: p.ingreso.total > 0,
+    apartado: p.borrador.apartado,
   });
   const reparto = calcularReparto(
     p.ingreso.total,
@@ -2137,8 +2183,9 @@ export function vistaCorte(p: PropsCorte): HTMLElement {
       el('p', {
         clase: 'detalle',
         texto:
-          'El efectivo se descuenta solo de la caja: primero del fondo y, si no alcanza, de lo ' +
-          'apartado para gasolina. Borrar un gasto se lo devuelve.',
+          'Di de qué sobre salió el efectivo. Del fondo salen los insumos, y lo que saques queda ' +
+          'como deuda hasta que se reponga. Lo que pagas con el efectivo de la venta —el gas de ' +
+          'Mamá Juani— va con «no salió de la caja». Borrar un gasto devuelve su efectivo.',
       }),
       ...listaGastos(p.borrador.gastos, p.alQuitarGasto),
       lineaDinero(
@@ -2147,8 +2194,11 @@ export function vistaCorte(p: PropsCorte): HTMLElement {
         'corte-total'
       ),
       el('div', { clase: 'espaciado' }, [concepto]),
+      campo('Sale de', origen),
       el('div', { clase: 'fila-botones' }, [monto, boton('Agregar', 'btn', agregar)]),
     ]),
+
+    bloqueApartado(p.borrador.apartado, p.alCambiarApartado),
 
     el('section', { clase: 'bloque' }, contenidoUtilidad(reparto, plan.apartados, null)),
 

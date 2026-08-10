@@ -1,3 +1,4 @@
+import type { Apartado } from './corte';
 import { FONDO_CAMBIO, FONDO_GASTO, MONTO_MAXIMO, importe, pesos } from './corte';
 import { LARGO_MAXIMO_TEXTO, fechaLegible } from './dominio';
 
@@ -50,8 +51,8 @@ export const SOBRES_SOCIOS: readonly Sobre[] = ['fran', 'primo'];
  * Con cuanto arranca cada sobre antes de cualquier movimiento.
  *
  * Fondo y cambio son rotatorios: su objetivo es fijo y no crece, solo se repone cuando alguien
- * saca de ahi. Los otros cuatro arrancan en cero y se llenan solos: gasolina y gas con el
- * apartado de cada dia de venta, los de los socios con su mitad de cada corte cerrado.
+ * saca de ahi. Los otros cuatro arrancan en cero y se llenan al cerrar el corte: gasolina y gas
+ * con lo que se haya apartado ese dia, los de los socios con su mitad.
  */
 export const BASE_SOBRE: Record<Sobre, number> = {
   fondo: FONDO_GASTO,
@@ -62,18 +63,14 @@ export const BASE_SOBRE: Record<Sobre, number> = {
   primo: 0,
 };
 
-/** Cuanto se aparta por cada dia en que hubo ventas. Editable en la vista Corte. */
-export type Tasas = {
-  gasolina: number;
-  gas: number;
-};
-
-export const TASA_GASOLINA = 4500;
-export const TASA_GAS = 4000;
-export const TASAS_INICIALES: Tasas = { gasolina: TASA_GASOLINA, gas: TASA_GAS };
-
-/** Los sobres que se llenan con el apartado diario, en el orden en que se muestran. */
-export const SOBRES_APARTADO: readonly ('gasolina' | 'gas')[] = ['gasolina', 'gas'];
+/**
+ * El unico sobre que se llena apartando: la gasolina, que se paga junta el domingo.
+ *
+ * El gas de Mama Juani se le paga cada dos lotes con el efectivo de ese dia y entra como gasto
+ * del corte, asi que su sobre ya no se llena. Sigue existiendo —lo apartado antes de esta regla
+ * es dinero real que hay en la caja— y el cierre del domingo lo paga cuando trae algo.
+ */
+export const SOBRES_APARTADO: readonly (keyof Apartado)[] = ['gasolina'];
 
 // ---------- movimientos ----------
 
@@ -325,8 +322,8 @@ export function sobresEnDeuda(estado: EstadoCaja): SaldoSobre[] {
  * la caja y cuanto sale.
  */
 export type PlanCaja = {
-  /** Lo que se aparta hoy para gasolina y gas. Vacio si no hubo ventas o si no alcanzo. */
-  apartados: { sobre: 'gasolina' | 'gas'; centavos: number }[];
+  /** Lo que se aparta hoy. Vacio si no se capturo nada. */
+  apartados: { sobre: keyof Apartado; centavos: number }[];
   totalApartado: number;
   /** Lo que queda para los socios despues de apartar. Negativo en un dia malo. */
   repartible: number;
@@ -342,9 +339,15 @@ export type PlanCaja = {
 /**
  * Se paga todo y se reparte lo que queda. En ese orden, que es como se opera con la mano:
  *
- *   1. la utilidad ya trae restados los gastos del dia (el corte la calculo)
- *   2. de ahi se aparta la gasolina y el gas
+ *   1. la utilidad ya trae restados los gastos del dia (el corte la calculo, y ahi va el gas de
+ *      Mama Juani los dias que se le paga)
+ *   2. de ahi se aparta la gasolina que Fran capturo en el corte
  *   3. lo que sobra se parte a la mitad, y cada mitad se va al sobre de su dueño
+ *
+ * El apartado es exactamente lo tecleado: no hay tarifa por dia de venta ni tope contra la
+ * utilidad. Recortarlo en silencio porque "no alcanzo" haria que la caja dijera una cosa y el
+ * bulto otra; si un dia se aparta mas de lo que se gano, el repartible sale negativo y eso lo
+ * absorben los dos, igual que cualquier mal dia.
  *
  * El apartado sale ANTES de repartir, o sea que lo pagan los dos. Antes salia solo del lado de
  * Fran —Primo cobraba su mitad completa y Fran financiaba la gasolina— y eso no es mitad y
@@ -363,21 +366,16 @@ export type PlanCaja = {
  */
 export function planCaja(entrada: {
   utilidad: number;
-  tasas: Tasas;
-  huboVentas: boolean;
+  /** Lo que se capturo hoy en el corte. Lo que quedo en cero no se aparta ni se pinta. */
+  apartado: Apartado;
   /** Solo para mostrarla. El plan no la cobra. */
   deuda: number;
 }): PlanCaja {
-  let disponible = Math.max(0, entrada.utilidad);
-
-  const apartados: { sobre: 'gasolina' | 'gas'; centavos: number }[] = [];
-  if (entrada.huboVentas) {
-    for (const sobre of SOBRES_APARTADO) {
-      const centavos = Math.min(entrada.tasas[sobre], disponible);
-      if (centavos <= 0) continue;
-      apartados.push({ sobre, centavos });
-      disponible -= centavos;
-    }
+  const apartados: { sobre: keyof Apartado; centavos: number }[] = [];
+  for (const sobre of SOBRES_APARTADO) {
+    const centavos = entrada.apartado[sobre];
+    if (centavos <= 0) continue;
+    apartados.push({ sobre, centavos });
   }
   const totalApartado = apartados.reduce((t, a) => t + a.centavos, 0);
 
@@ -446,47 +444,47 @@ export function movimientosDeCierre(entrada: {
 // ---------- el efectivo con el que se paga un gasto ----------
 
 /**
- * De donde sale el dinero para pagar un gasto, en orden: primero el fondo y, si no alcanza, lo
- * apartado para gasolina. Es la regla del negocio tal cual se opera.
+ * Los sobres de los que puede salir el efectivo de un gasto, en el orden en que se ofrecen.
+ *
+ * El fondo es el sobre de trabajo: de ahi salen los insumos. La gasolina esta porque a veces se
+ * echa mano de ella cuando el fondo no da —"saque 18 de la gasolina para las botellas"—, y eso
+ * deja deuda igual que cualquier prestamo.
+ *
+ * El gas NO esta: a Mama Juani se le paga con el efectivo de la venta de ese dia, no de la
+ * caja. Ese gasto se captura con "no salio de la caja" y no mueve ningun sobre.
  */
-export const ORDEN_PARA_GASTOS: readonly Sobre[] = ['fondo', 'gasolina'];
+export const SOBRES_DE_GASTO: readonly Sobre[] = ['fondo', 'gasolina'];
 
 /**
- * Reparte un gasto entre los sobres que pueden pagarlo, sin sacar de ninguno mas de lo que
- * tiene.
+ * Cuanto de un gasto sale del sobre que se eligio, sin sacar de el mas de lo que tiene.
  *
- * Lo que no alcance a cubrirse NO se registra: si el fondo y la gasolina estan vacios, ese
- * dinero salio de la venta del dia o de la bolsa de alguien, no de la caja, y anotarlo aqui
+ * `sobre` null = no salio de la caja: se pago con el efectivo de la venta del dia o de una
+ * bolsa. Lo que el sobre no alcance a cubrir tampoco se registra, por lo mismo: anotarlo
  * inventaria efectivo que la caja nunca tuvo. El gasto igual cuenta completo en el corte, que
  * es lo que decide la utilidad.
  */
 export function origenDelGasto(
   estado: EstadoCaja,
+  sobre: Sobre | null,
   centavos: number
 ): { sobre: Sobre; centavos: number }[] {
-  const salida: { sobre: Sobre; centavos: number }[] = [];
-  let restante = centavos;
-  for (const sobre of ORDEN_PARA_GASTOS) {
-    if (restante <= 0) break;
-    const saldo = estado.sobres.find((s) => s.sobre === sobre);
-    const disponible = Math.max(0, saldo?.hay ?? 0);
-    const toma = Math.min(disponible, restante);
-    if (toma <= 0) continue;
-    salida.push({ sobre, centavos: toma });
-    restante -= toma;
-  }
-  return salida;
+  if (sobre === null) return [];
+  const saldo = estado.sobres.find((s) => s.sobre === sobre);
+  const disponible = Math.max(0, saldo?.hay ?? 0);
+  const toma = Math.min(disponible, centavos);
+  return toma <= 0 ? [] : [{ sobre, centavos: toma }];
 }
 
 /** El prefijo del id ata el movimiento a su linea de gasto: quitar el gasto quita el movimiento. */
-function idDeGasto(gastoId: string, sobre: Sobre): string {
-  return `caja-gasto-${gastoId}-${sobre}`;
+function prefijoDeGasto(gastoId: string): string {
+  return `caja-gasto-${gastoId}-`;
 }
 
 /**
- * Los movimientos que escribe capturar un gasto en el corte. Salen del fondo, asi que dejan
- * deuda: el gasto ya bajo la utilidad de los dos y la caja se rellena sola con el efectivo que
- * retiene al cerrar.
+ * Los movimientos que escribe capturar un gasto en el corte, con el efectivo saliendo del sobre
+ * que se eligio. Siempre como prestamo: el gasto ya bajo la utilidad de los dos y la caja se
+ * rellena sola con el efectivo que retiene al cerrar, asi que lo que salio del sobre hay que
+ * reponerlo.
  *
  * Nacen sellados a proposito. No son capturas sueltas sino el reflejo de una linea del corte:
  * se corrigen borrando o reescribiendo el gasto, que es de donde salieron. Dejarlos editables
@@ -501,7 +499,7 @@ export function movimientosDeGasto(entrada: {
   origen: readonly { sobre: Sobre; centavos: number }[];
 }): MovimientoCaja[] {
   return entrada.origen.map((parte) => ({
-    id: idDeGasto(entrada.gastoId, parte.sobre),
+    id: `${prefijoDeGasto(entrada.gastoId)}${parte.sobre}`,
     ts: entrada.ts,
     fecha: entrada.fecha,
     device: entrada.device,
@@ -512,13 +510,17 @@ export function movimientosDeGasto(entrada: {
   }));
 }
 
-/** Quita los movimientos de una linea de gasto borrada. */
+/**
+ * Quita los movimientos de una linea de gasto borrada. Por prefijo del id y no por la lista de
+ * sobres: asi tambien se lleva los de un gasto viejo que hubiera salido de un sobre que hoy ya
+ * no se ofrece.
+ */
 export function sinMovimientosDeGasto(
   movimientos: readonly MovimientoCaja[],
   gastoId: string
 ): MovimientoCaja[] {
-  const suyos = new Set(ORDEN_PARA_GASTOS.map((sobre) => idDeGasto(gastoId, sobre)));
-  return movimientos.filter((m) => !suyos.has(m.id));
+  const prefijo = prefijoDeGasto(gastoId);
+  return movimientos.filter((m) => !m.id.startsWith(prefijo));
 }
 
 // ---------- el cierre del domingo ----------
@@ -634,10 +636,10 @@ export function movimientoDeArqueo(entrada: {
  *
  * La unica salida que si hay que restar aparte es el sueldo de Primo: su mitad ya salio de la
  * utilidad el dia que se gano, asi que pagarsela mueve efectivo sin volver a costar. La
- * gasolina y el gas no entran aqui porque el dia que se pagan tambien se capturan como gasto.
+ * gasolina y el gas no entran aqui: cuando se pagan desde el corte llevan detras su linea de
+ * gasto, que ya bajo la utilidad.
  *
- * Se asume que todo prestamo termina en un gasto del negocio, que es como se opera: los gastos
- * se cubren con el fondo y, si no alcanza, con lo apartado para gasolina.
+ * Se asume que todo prestamo del fondo termina en un gasto del negocio, que es como se opera.
  */
 export function cajaParaEsperado(
   movimientos: readonly MovimientoCaja[],
@@ -656,14 +658,6 @@ const TIPOS: readonly TipoMovimiento[] = ['apartado', 'pago', 'prestamo', 'repos
 
 function textoValido(valor: unknown): valor is string {
   return typeof valor === 'string' && valor.length > 0 && valor.length <= LARGO_MAXIMO_TEXTO;
-}
-
-export function validarTasas(valor: unknown): Tasas {
-  if (typeof valor !== 'object' || valor === null) return { ...TASAS_INICIALES };
-  const { gasolina, gas } = valor as Record<string, unknown>;
-  const tasa = (v: unknown, porDefecto: number): number =>
-    typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= MONTO_MAXIMO ? v : porDefecto;
-  return { gasolina: tasa(gasolina, TASA_GASOLINA), gas: tasa(gas, TASA_GAS) };
 }
 
 /** Un movimiento ilegible se descarta solo; el resto de la caja se sigue leyendo. */

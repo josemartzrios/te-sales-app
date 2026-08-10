@@ -46,6 +46,29 @@ export type LineaGasto = {
 };
 
 /**
+ * Lo que se aparta HOY. Solo la gasolina: es el unico gasto que se paga junto, el domingo, asi
+ * que hay que ir guardando para el. Se captura a mano en el corte, cada dia: no hay tarifa fija
+ * ni monto por defecto. Antes salia solo —45 cada dia que hubiera ventas— y eso apartaba los
+ * dias que no se cargo nada y apartaba de menos los dias que se cargo mas.
+ *
+ * El gas de Mama Juani NO se aparta: se le paga cada dos lotes con el efectivo de la venta de
+ * ese dia, asi que entra como un gasto mas el dia que se le paga. Apartarlo Y capturarlo como
+ * gasto lo cobraria dos veces —una al apartar, otra al pagar—, y quien lo paga son los dos.
+ *
+ * Cero = hoy no se aparto nada. No se pinta linea ni se escribe movimiento.
+ */
+export type Apartado = {
+  /** Centavos, cero o mas. */
+  gasolina: number;
+};
+
+export const APARTADO_VACIO: Apartado = { gasolina: 0 };
+
+export function totalApartado(apartado: Apartado): number {
+  return apartado.gasolina;
+}
+
+/**
  * Adeudos y compensaciones: la mecanica formal llega en v2. En v1 el arreglo siempre va vacio.
  * Existe desde ahora para que agregarlas sea empujar objetos a un arreglo que ya esta escrito
  * en cada corte guardado, no una migracion sobre cortes cerrados que son inmutables.
@@ -79,11 +102,11 @@ export type Reparto = {
   ajustes: number;
   utilidad: number;
   /**
-   * Los gastos fijos del dia —gasolina y gas— que se guardan en la caja al cerrar. Se restan
-   * despues de la utilidad y antes de partir a la mitad, asi que los pagan los dos.
+   * Lo que se aparto el dia —gasolina y gas— y se guarda en la caja al cerrar. Se resta
+   * despues de la utilidad y antes de partir a la mitad, asi que lo pagan los dos.
    *
-   * Los cortes cerrados antes de esta regla no lo traen y se leen con 0: en aquellos el
-   * apartado salia del lado de Fran, y el pasado no se recalcula.
+   * Es lo que Fran capturo en el corte de ese dia; los cortes cerrados cuando salia de una
+   * tarifa fija traen lo que aquella tarifa aparto, y el pasado no se recalcula.
    */
   apartado: number;
   /** utilidad - apartado: lo que de verdad se parte entre los dos. */
@@ -96,6 +119,8 @@ export type Reparto = {
 export type Borrador = {
   fecha: string;
   gastos: LineaGasto[];
+  /** Lo que se aparta hoy. Arranca en cero: se teclea, no se supone. */
+  apartado: Apartado;
 };
 
 /** Como estaba la caja en el momento de cerrar. null en los cortes anteriores a los sobres. */
@@ -131,7 +156,7 @@ export type CorteCerrado = {
 export const PRECIOS_INICIALES: Precios = { calle: PRECIO_CALLE, mayoreo: PRECIO_MAYOREO };
 
 export function borradorVacio(fecha: string): Borrador {
-  return { fecha, gastos: [] };
+  return { fecha, gastos: [], apartado: { ...APARTADO_VACIO } };
 }
 
 // ---------- dinero: formato y captura ----------
@@ -236,6 +261,11 @@ export function calcularReparto(
   };
 }
 
+/**
+ * El reparto del borrador tal como esta capturado. `apartado` se pasa aparte —y no se toma del
+ * borrador— porque quien llama a veces necesita la utilidad ANTES de apartar: es el numero del
+ * que sale el plan de la caja.
+ */
 export function repartoDeBorrador(
   borrador: Borrador,
   ingreso: Ingreso,
@@ -319,7 +349,9 @@ export function guardarBorrador(
   borrador: Borrador
 ): Borrador[] {
   const otros = borradores.filter((b) => b.fecha !== borrador.fecha);
-  return borrador.gastos.length === 0 ? otros : [...otros, borrador];
+  // Sin gastos pero con apartado tecleado si se guarda: borrarlo perderia lo capturado.
+  const vacio = borrador.gastos.length === 0 && totalApartado(borrador.apartado) === 0;
+  return vacio ? otros : [...otros, borrador];
 }
 
 export function nuevaLinea(concepto: string, centavos: number, semilla: string): LineaGasto {
@@ -332,6 +364,11 @@ export function conGasto(borrador: Borrador, gasto: LineaGasto): Borrador {
 
 export function sinGasto(borrador: Borrador, id: string): Borrador {
   return { ...borrador, gastos: borrador.gastos.filter((g) => g.id !== id) };
+}
+
+/** Reemplaza el apartado del dia completo: los dos campos se guardan juntos, como se capturan. */
+export function conApartado(borrador: Borrador, apartado: Apartado): Borrador {
+  return { ...borrador, apartado: { ...apartado } };
 }
 
 // ---------- validacion defensiva de lo guardado ----------
@@ -381,12 +418,25 @@ export function validarPrecios(valor: unknown): Precios {
   };
 }
 
+/**
+ * Ausente o ilegible = borrador de antes de que el apartado se capturara, o de un dia en el que
+ * no se tecleo. Se lee en cero, que es lo que significa: hoy no se aparto nada. No se rellena
+ * con ninguna tarifa —esa es justo la que se quito.
+ */
+function validarApartado(valor: unknown): Apartado {
+  if (typeof valor !== 'object' || valor === null || Array.isArray(valor)) {
+    return { ...APARTADO_VACIO };
+  }
+  const { gasolina } = valor as Record<string, unknown>;
+  return { gasolina: centavosValidos(gasolina, 0) ? gasolina : 0 };
+}
+
 /** El 'reponerCaja' de los borradores viejos se ignora: ese monto ahora vive en caja.ts. */
 export function validarBorrador(valor: unknown): Borrador | null {
   if (typeof valor !== 'object' || valor === null || Array.isArray(valor)) return null;
-  const { fecha, gastos } = valor as Record<string, unknown>;
+  const { fecha, gastos, apartado } = valor as Record<string, unknown>;
   if (!fechaValida(fecha)) return null;
-  return { fecha, gastos: validarLineas(gastos, 1) };
+  return { fecha, gastos: validarLineas(gastos, 1), apartado: validarApartado(apartado) };
 }
 
 function validarCanal(valor: unknown): IngresoCanal | null {
@@ -510,7 +560,8 @@ export function resumenCorte(corte: CorteCerrado): string {
 
   lineas.push(`Utilidad: ${importe(reparto.utilidad)}`);
   if (reparto.apartado > 0) {
-    lineas.push(`Gasolina y gas: ${importe(reparto.apartado)}`);
+    // Sin decir para que: hoy es la gasolina, y los cortes viejos traen gasolina y gas juntos.
+    lineas.push(`Se apartó: ${importe(reparto.apartado)}`);
     lineas.push(`Se reparte: ${importe(reparto.repartible)}`);
   }
   lineas.push(`Fran: ${importe(reparto.fran)}`);

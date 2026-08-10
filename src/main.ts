@@ -30,13 +30,14 @@ import {
   turnoActual,
   ultimaVentaActiva,
 } from './dominio';
-import type { Borrador, CorteCerrado, Precios } from './corte';
+import type { Apartado, Borrador, CorteCerrado, Precios } from './corte';
 import {
   agregarCorte,
   borradorDe,
   borradorVacio,
   centavosDesde,
   cerrarCorte,
+  conApartado,
   conGasto,
   corteDeFecha,
   guardarBorrador,
@@ -47,7 +48,7 @@ import {
   resumenCorte,
   sinGasto,
 } from './corte';
-import type { MovimientoCaja, Sobre, Tasas } from './caja';
+import type { MovimientoCaja, Sobre } from './caja';
 import {
   NOMBRE_SOBRE,
   agregarMovimientos,
@@ -68,7 +69,6 @@ import {
   sellarMovimientos,
   sinMovimientosDeGasto,
   tipoDeMovimiento,
-  validarTasas,
 } from './caja';
 import {
   escribirAjustes,
@@ -77,7 +77,6 @@ import {
   escribirEventos,
   escribirMovimientos,
   escribirPrecios,
-  escribirTasas,
   leerAjustes,
   leerBorradores,
   leerCortes,
@@ -85,7 +84,6 @@ import {
   leerMovimientos,
   leerPrecios,
   leerRespaldo,
-  leerTasas,
   migrar,
 } from './almacenamiento';
 import type { CapturaCaja, DatosCargaRetro, DatosRetro, Vista } from './ui';
@@ -134,7 +132,6 @@ let cortes: CorteCerrado[] = lecturaCortes.datos;
 let borradores: Borrador[] = lecturaBorradores.datos;
 let movimientos: MovimientoCaja[] = lecturaMovimientos.datos;
 let precios: Precios = leerPrecios();
-let tasas: Tasas = leerTasas();
 
 escribirAjustes(ajustes);
 
@@ -670,7 +667,11 @@ function guardarYPintar(borrador: Borrador): boolean {
   return true;
 }
 
-function agregarGasto(concepto: string, monto: string): void {
+/**
+ * `origen` es el sobre del que salio el efectivo, o null si no salio de la caja. Lo elige Fran
+ * al capturar: el fondo paga los insumos, y el gas y la gasolina se pagan de su propio sobre.
+ */
+function agregarGasto(concepto: string, monto: string, origen: Sobre | null): void {
   const limpio = concepto.trim();
   if (limpio === '' || limpio.length > LARGO_MAXIMO_TEXTO) {
     toast('Escribe el concepto del gasto');
@@ -683,9 +684,8 @@ function agregarGasto(concepto: string, monto: string): void {
   }
   const linea = nuevaLinea(limpio, centavos, nuevoId(ajustes.deviceId));
 
-  // El efectivo sale del fondo y, si no alcanza, de lo apartado para gasolina. Se escribe en la
-  // caja antes que el gasto: si la caja no se pudo guardar, el gasto tampoco se captura y las
-  // dos libretas no se separan.
+  // El efectivo se escribe en la caja antes que el gasto: si la caja no se pudo guardar, el
+  // gasto tampoco se captura y las dos libretas no se separan.
   const ahora = new Date();
   const delGasto = movimientosDeGasto({
     gastoId: linea.id,
@@ -693,7 +693,7 @@ function agregarGasto(concepto: string, monto: string): void {
     ts: isoLocal(ahora),
     fecha: claveFecha(ahora),
     device: ajustes.deviceId,
-    origen: origenDelGasto(estadoCaja(movimientos), centavos),
+    origen: origenDelGasto(estadoCaja(movimientos), origen, centavos),
   });
   if (delGasto.length > 0 && !aplicarMovimientos(agregarMovimientos(movimientos, delGasto))) {
     return;
@@ -702,10 +702,10 @@ function agregarGasto(concepto: string, monto: string): void {
   if (!guardarYPintar(conGasto(borradorActual(), linea))) return;
 
   const deLaCaja = delGasto.reduce((total, m) => total - m.centavos, 0);
-  if (deLaCaja < centavos) {
-    // La caja no tenia con que cubrirlo entero: el resto salio de la venta del dia o de una
-    // bolsa. El gasto cuenta completo igual; solo no se inventa efectivo que la caja no tuvo.
-    toast(`Gasto capturado · de la caja salieron ${importe(deLaCaja)}`, 3500);
+  if (origen !== null && deLaCaja < centavos) {
+    // El sobre no tenia con que cubrirlo entero: el resto salio de la venta del dia o de una
+    // bolsa. El gasto cuenta completo igual; solo no se inventa efectivo que el sobre no tuvo.
+    toast(`Gasto capturado · de ${NOMBRE_SOBRE[origen]} salieron ${importe(deLaCaja)}`, 3500);
   }
   enfocarGasto();
 }
@@ -908,22 +908,20 @@ function cerrarSemana(): void {
   render();
 }
 
-function cambiarTasas(gasolina: string, gas: string): void {
+/**
+ * Lo que se aparta hoy para la gasolina del domingo. Va en el borrador del dia, no en una
+ * tarifa: se captura corte por corte y el campo vacio es un cero legitimo —hoy no se aparto
+ * nada—, no un dato faltante que haya que rellenar con nada.
+ */
+function cambiarApartado(gasolina: string): void {
   const porGasolina = montoOpcional(gasolina);
-  const porGas = montoOpcional(gas);
-  if (porGasolina === null || porGas === null) {
+  if (porGasolina === null) {
     toast('Monto de apartado invalido');
     return;
   }
-  const nuevas = validarTasas({ gasolina: porGasolina, gas: porGas });
-  const error = escribirTasas(nuevas);
-  if (error !== null) {
-    toast(error, 5000);
-    return;
-  }
-  tasas = nuevas;
-  toast('Apartado guardado · los cortes ya cerrados no cambian');
-  render();
+  const apartado: Apartado = { gasolina: porGasolina };
+  if (!guardarYPintar(conApartado(borradorActual(), apartado))) return;
+  toast(`Se aparta ${importe(porGasolina)} de este día`);
 }
 
 function cambiarPrecios(calle: string, mayoreo: string): void {
@@ -966,8 +964,7 @@ function cerrarCorteDelDia(): void {
   const plan = planCaja({
     utilidad: reparto.utilidad,
     deuda: estadoCaja(movimientos).deuda,
-    tasas,
-    huboVentas: ingreso.total > 0,
+    apartado: borrador.apartado,
   });
 
   const confirmado = window.confirm(
@@ -1118,7 +1115,6 @@ function vistaActual(): HTMLElement {
       return vistaCaja({
         caja: estadoCaja(movimientos),
         movimientos,
-        tasas,
         semana: planSemana(estadoCaja(movimientos)),
         alMover: moverCaja,
         alEditar: corregirCaja,
@@ -1126,7 +1122,6 @@ function vistaActual(): HTMLElement {
         alArquear: arquearCaja,
         alCerrarSemana: cerrarSemana,
         alCobrar: cobrarSobre,
-        alCambiarTasas: cambiarTasas,
         alCopiar: () =>
           void compartirTexto(resumenCaja(estadoCaja(movimientos)), 'Caja copiada'),
         alIrA: irAVista,
@@ -1140,13 +1135,13 @@ function vistaActual(): HTMLElement {
         cerrado: corteDeFecha(cortes, estado.fechaCorte),
         caja: estadoCaja(movimientos),
         cajaAlAbrir: cajaParaEsperado(movimientos, estado.fechaCorte),
-        tasas,
         alCambiarFecha: (f) => {
           estado.fechaCorte = f;
           render();
         },
         alAgregarGasto: agregarGasto,
         alQuitarGasto: quitarGasto,
+        alCambiarApartado: cambiarApartado,
         alCambiarPrecios: cambiarPrecios,
         alCerrar: cerrarCorteDelDia,
         alCopiar: () => void copiarCorte(),

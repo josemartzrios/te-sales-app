@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { MovimientoCaja, Sobre, TipoMovimiento } from './caja';
 import {
   BASE_SOBRE,
-  TASAS_INICIALES,
+  SOBRES_DE_GASTO,
   agregarMovimientos,
   arquear,
   borrarMovimiento,
@@ -25,9 +25,9 @@ import {
   sobresEnDeuda,
   tipoDeMovimiento,
   validarMovimiento,
-  validarTasas,
 } from './caja';
-import { calcularReparto, efectivoEsperado, importe } from './corte';
+import type { Apartado } from './corte';
+import { APARTADO_VACIO, calcularReparto, efectivoEsperado, importe } from './corte';
 
 // ---------- fixtures ----------
 
@@ -295,11 +295,14 @@ describe('el dia real: tomé prestado para comprar insumos', () => {
 // ---------- el plan del dia ----------
 
 describe('planCaja', () => {
-  const base = { tasas: TASAS_INICIALES, huboVentas: true, deuda: 0 };
+  /** Lo que Fran tecleo ese dia. Nada sale por defecto: sin captura no hay apartado. */
+  const aparta = (gasolina: number): Apartado => ({ gasolina });
+  const base = { apartado: aparta(8500), deuda: 0 };
 
   /**
    * El dia que describe Fran: 1 lote de 18 botellas a 20 son 360 de ingreso, y el te costo 154
-   * pagados con dinero del fondo. Su cuenta con la mano da 60.50 para cada uno.
+   * pagados con dinero del fondo. Ese dia aparto 85 para la gasolina, y su cuenta con la mano da
+   * 60.50 para cada uno.
    */
   it('el dia real de Fran: 60.50 para cada quien, no 0 y 103', () => {
     const reparto = calcularReparto(36000, [{ id: 'g', concepto: 'Te', centavos: 15400 }]);
@@ -310,6 +313,19 @@ describe('planCaja', () => {
     expect(importe(plan.repartible)).toBe('$121.00');
     expect(importe(plan.fran)).toBe('$60.50');
     expect(importe(plan.primo)).toBe('$60.50');
+  });
+
+  /**
+   * A Mama Juani se le paga con el efectivo de la venta del dia, cada dos lotes: entra como
+   * gasto y baja la utilidad ahi mismo. No se aparta, o se cobraria dos veces.
+   */
+  it('el gas de Mama Juani es gasto del dia, no apartado', () => {
+    const reparto = calcularReparto(36000, [{ id: 'g', concepto: 'Mamá Juani', centavos: 4000 }]);
+    const plan = planCaja({ apartado: APARTADO_VACIO, deuda: 0, utilidad: reparto.utilidad });
+    expect(plan.totalApartado).toBe(0);
+    expect(plan.repartible).toBe(32000);
+    expect(plan.fran).toBe(16000);
+    expect(plan.primo).toBe(16000);
   });
 
   it('el apartado sale antes de repartir: lo pagan los dos, no solo Fran', () => {
@@ -337,58 +353,54 @@ describe('planCaja', () => {
   });
 
   it('el centavo impar se lo queda Fran, que trae la caja', () => {
-    const plan = planCaja({ ...base, huboVentas: false, utilidad: 101 });
+    const plan = planCaja({ apartado: APARTADO_VACIO, deuda: 0, utilidad: 101 });
     expect(plan.fran).toBe(51);
     expect(plan.primo).toBe(50);
   });
 
   /**
-   * 120 de utilidad contra 85 de apartado: alcanza para los dos sobres y quedan 35 a repartir.
-   * El tope existe para no obligar a nadie a poner dinero de su bolsa.
+   * La regla nueva: se aparta lo que Fran capturo, ni un peso mas. Un dia que no cargo gasolina
+   * no aparta nada aunque se haya vendido, y un dia que cargo 200 aparta 200.
    */
-  it('en un dia flojo aparta hasta donde alcanza', () => {
-    const plan = planCaja({ ...base, utilidad: 12000, deuda: 10000 });
-    expect(plan.apartados).toEqual([
-      { sobre: 'gasolina', centavos: 4500 },
-      { sobre: 'gas', centavos: 4000 },
-    ]);
-    expect(plan.repartible).toBe(3500);
-  });
-
-  it('si la utilidad no da ni para el apartado, aparta lo que hay y no reparte nada', () => {
-    const plan = planCaja({ ...base, utilidad: 6000 });
-    expect(plan.apartados).toEqual([
-      { sobre: 'gasolina', centavos: 4500 },
-      { sobre: 'gas', centavos: 1500 },
-    ]);
-    expect(plan.totalApartado).toBe(6000);
-    expect(plan.repartible).toBe(0);
-    expect(plan.fran).toBe(0);
-  });
-
-  it('sin ventas no aparta nada: el apartado es por dia vendido, no por dia del calendario', () => {
-    const plan = planCaja({ ...base, huboVentas: false, utilidad: 0, deuda: 2500 });
+  it('sin capturar nada no aparta, aunque el dia haya sido bueno', () => {
+    const plan = planCaja({ apartado: APARTADO_VACIO, deuda: 2500, utilidad: 70000 });
     expect(plan.apartados).toEqual([]);
     expect(plan.totalApartado).toBe(0);
+    expect(plan.repartible).toBe(70000);
     expect(plan.deuda).toBe(2500);
   });
 
+  it('aparta exactamente lo capturado, sin tarifa de por medio', () => {
+    const plan = planCaja({ apartado: aparta(20000), deuda: 0, utilidad: 70000 });
+    expect(plan.apartados).toEqual([{ sobre: 'gasolina', centavos: 20000 }]);
+    expect(plan.repartible).toBe(50000);
+  });
+
+  /**
+   * No se recorta contra la utilidad. Si Fran aparto 85 en un dia de 60, ese dinero SI se quedo
+   * en la caja; recortarlo dejaria a la caja diciendo una cosa y al bulto otra. El faltante lo
+   * absorben los dos, como cualquier mal dia.
+   */
+  it('lo capturado no se recorta aunque pase de la utilidad', () => {
+    const plan = planCaja({ ...base, utilidad: 6000 });
+    expect(plan.totalApartado).toBe(8500);
+    expect(plan.repartible).toBe(-2500);
+    expect(plan.fran).toBe(-1250);
+    expect(plan.primo).toBe(-1250);
+  });
+
   it('un dia en perdida lo absorben los dos, mitad y mitad', () => {
-    const plan = planCaja({ ...base, utilidad: -5000 });
+    const plan = planCaja({ apartado: APARTADO_VACIO, deuda: 0, utilidad: -5000 });
     expect(plan.apartados).toEqual([]);
     expect(plan.fran).toBe(-2500);
     expect(plan.primo).toBe(-2500);
   });
 
-  it('una tasa en cero no genera linea de apartado', () => {
-    const plan = planCaja({
-      utilidad: 70000,
-      deuda: 0,
-      tasas: { gasolina: 4500, gas: 0 },
-      huboVentas: true,
-    });
-    expect(plan.apartados).toHaveLength(1);
-    expect(plan.totalApartado).toBe(4500);
+  it('el campo en cero no genera linea de apartado', () => {
+    expect(planCaja({ apartado: aparta(0), deuda: 0, utilidad: 70000 }).apartados).toEqual([]);
+    expect(planCaja({ apartado: aparta(4500), deuda: 0, utilidad: 70000 }).apartados).toEqual([
+      { sobre: 'gasolina', centavos: 4500 },
+    ]);
   });
 });
 
@@ -396,16 +408,11 @@ describe('planCaja', () => {
 
 describe('movimientosDeCierre', () => {
   const entrada = { fecha: FECHA, ts: `${FECHA}T22:00:00-07:00`, device: 'dev1' };
-  const plan = planCaja({
-    utilidad: 70000,
-    deuda: 0,
-    tasas: TASAS_INICIALES,
-    huboVentas: true,
-  });
+  const plan = planCaja({ utilidad: 70000, deuda: 0, apartado: { gasolina: 8500 } });
 
-  it('aparta gasolina, gas y la mitad de cada socio', () => {
+  it('aparta la gasolina y la mitad de cada socio', () => {
     const movs = movimientosDeCierre({ ...entrada, plan });
-    expect(movs.map((m) => m.sobre)).toEqual(['gasolina', 'gas', 'fran', 'primo']);
+    expect(movs.map((m) => m.sobre)).toEqual(['gasolina', 'fran', 'primo']);
     expect(movs.every((m) => m.tipo === 'apartado')).toBe(true);
     expect(estadoCaja(movs).hay).toBe(32000 + 70000);
   });
@@ -422,24 +429,14 @@ describe('movimientosDeCierre', () => {
    * absorbiendo la perdida completa el dia que volvia a haber utilidad.
    */
   it('un dia en perdida le baja el acumulado a LOS DOS, no solo a Primo', () => {
-    const malo = planCaja({
-      utilidad: -5000,
-      deuda: 0,
-      tasas: TASAS_INICIALES,
-      huboVentas: true,
-    });
+    const malo = planCaja({ utilidad: -5000, deuda: 0, apartado: APARTADO_VACIO });
     const movs = movimientosDeCierre({ ...entrada, plan: malo });
     expect(saldoDe(movs, 'fran').hay).toBe(-2500);
     expect(saldoDe(movs, 'primo').hay).toBe(-2500);
   });
 
   it('sin mitad que repartir no escribe lineas de cero', () => {
-    const cero = planCaja({
-      utilidad: 0,
-      deuda: 0,
-      tasas: TASAS_INICIALES,
-      huboVentas: false,
-    });
+    const cero = planCaja({ utilidad: 0, deuda: 0, apartado: APARTADO_VACIO });
     const movs = movimientosDeCierre({ ...entrada, plan: cero });
     expect(movs).toEqual([]);
   });
@@ -472,15 +469,12 @@ describe('movimientoDeCobro', () => {
  * son 60.50 para cada quien; sin sobre para Fran le tocaban 137.50 a Primo y 60.50 a el.
  */
 describe('comprar un dia y vender al otro', () => {
-  const tasas = TASAS_INICIALES;
-
   it('cierra parejo aunque el gasto y la venta caigan en dias distintos', () => {
-    // Lunes: se saca el te del fondo y no se vende nada.
+    // Lunes: se saca el te del fondo, no se vende nada y no se aparta nada.
     const lunes = planCaja({
       utilidad: calcularReparto(0, [{ id: 'g', concepto: 'Te', centavos: 15400 }]).utilidad,
       deuda: 0,
-      tasas,
-      huboVentas: false,
+      apartado: APARTADO_VACIO,
     });
     const movsLunes = movimientosDeCierre({
       fecha: '2026-08-10',
@@ -489,12 +483,11 @@ describe('comprar un dia y vender al otro', () => {
       plan: lunes,
     });
 
-    // Martes: se venden los 360 sin gastos nuevos.
+    // Martes: se venden los 360 sin gastos nuevos y se apartan 85 para la gasolina.
     const martes = planCaja({
       utilidad: calcularReparto(36000, []).utilidad,
       deuda: 15400,
-      tasas,
-      huboVentas: true,
+      apartado: { gasolina: 8500 },
     });
     const movsMartes = movimientosDeCierre({
       fecha: '2026-08-11',
@@ -562,42 +555,46 @@ describe('validarMovimiento', () => {
   });
 });
 
-// ---------- los gastos salen solos de la caja ----------
+// ---------- de que sobre sale el efectivo de un gasto ----------
 
 describe('origenDelGasto', () => {
-  it('un gasto que cabe en el fondo sale entero de ahi', () => {
-    expect(origenDelGasto(estadoCaja([]), 15400)).toEqual([{ sobre: 'fondo', centavos: 15400 }]);
+  it('un gasto que cabe en el sobre elegido sale entero de ahi', () => {
+    expect(origenDelGasto(estadoCaja([]), 'fondo', 15400)).toEqual([
+      { sobre: 'fondo', centavos: 15400 },
+    ]);
   });
 
-  it('si el fondo no alcanza, el resto sale de lo apartado para gasolina', () => {
-    // Fondo con 46 (ya se habian sacado 154) y gasolina con 135: un gasto de 100 toma de los dos.
+  it('no se derrama a otro sobre: el que se eligio paga lo que puede y ya', () => {
+    // El fondo trae 46 y la gasolina 135; un gasto de 100 contra el fondo toma 46, no 100.
     const estado = estadoCaja([
       mov('prestamo', 'fondo', -15400),
       mov('apartado', 'gasolina', 13500),
     ]);
-    expect(origenDelGasto(estado, 10000)).toEqual([
-      { sobre: 'fondo', centavos: 4600 },
-      { sobre: 'gasolina', centavos: 5400 },
-    ]);
+    expect(origenDelGasto(estado, 'fondo', 10000)).toEqual([{ sobre: 'fondo', centavos: 4600 }]);
   });
 
   it('nunca saca de un sobre mas de lo que tiene', () => {
     const estado = estadoCaja([mov('prestamo', 'fondo', -20000)]);
-    expect(origenDelGasto(estado, 5000)).toEqual([]);
+    expect(origenDelGasto(estado, 'fondo', 5000)).toEqual([]);
   });
 
-  it('con la caja vacia no registra nada: ese dinero no salio de la caja', () => {
-    const estado = estadoCaja([
-      mov('prestamo', 'fondo', -20000),
-      mov('apartado', 'gasolina', 1000),
-    ]);
+  it('con el sobre vacio no registra nada: ese dinero no salio de la caja', () => {
+    const estado = estadoCaja([mov('apartado', 'gasolina', 1000)]);
     // Solo hay 10 en gasolina para un gasto de 154: se toman los 10 y el resto no se inventa.
-    expect(origenDelGasto(estado, 15400)).toEqual([{ sobre: 'gasolina', centavos: 1000 }]);
+    expect(origenDelGasto(estado, 'gasolina', 15400)).toEqual([
+      { sobre: 'gasolina', centavos: 1000 },
+    ]);
   });
 
-  it('el cambio no paga gastos: es para dar cambio, no para comprar', () => {
-    const origen = origenDelGasto(estadoCaja([]), 40000);
-    expect(origen.some((o) => o.sobre === 'cambio')).toBe(false);
+  /** El caso de Mama Juani: se le paga con el efectivo de la venta, no con dinero de la caja. */
+  it('sin sobre no se mueve la caja: se pago con el efectivo del dia', () => {
+    expect(origenDelGasto(estadoCaja([]), null, 4000)).toEqual([]);
+  });
+
+  it('solo se ofrecen los sobres de los que de verdad sale efectivo para gastar', () => {
+    // El cambio es para dar cambio, no para comprar. El gas no esta porque a Mama Juani se le
+    // paga de la venta del dia, y los de los socios son de ellos.
+    expect(SOBRES_DE_GASTO).toEqual(['fondo', 'gasolina']);
   });
 });
 
@@ -605,7 +602,7 @@ describe('movimientosDeGasto', () => {
   const base = { gastoId: 'g1', concepto: 'Te', ts: 'x', fecha: FECHA, device: 'd' };
 
   it('el te de Fran sale del fondo y deja su deuda', () => {
-    const origen = origenDelGasto(estadoCaja([]), 15400);
+    const origen = origenDelGasto(estadoCaja([]), 'fondo', 15400);
     const movs = movimientosDeGasto({ ...base, origen });
     expect(movs).toHaveLength(1);
     expect(movs[0]).toMatchObject({ sobre: 'fondo', centavos: -15400, tipo: 'prestamo' });
@@ -614,14 +611,41 @@ describe('movimientosDeGasto', () => {
     expect(saldoDe(movs, 'fondo').hay).toBe(4600);
   });
 
+  /**
+   * Lo que motivo el cambio: pagarle a Mama Juani con el efectivo de la venta le dejaba al fondo
+   * una deuda de 40 que nunca salio de ahi. Ahora el gasto no toca la caja.
+   */
+  it('el gas de Mama Juani no mueve ningun sobre: se pago de la venta del dia', () => {
+    const origen = origenDelGasto(estadoCaja([]), null, 4000);
+    const movs = movimientosDeGasto({ ...base, concepto: 'Mamá Juani', origen });
+    expect(movs).toEqual([]);
+    expect(saldoDe([], 'fondo').hay).toBe(BASE_SOBRE.fondo);
+    expect(estadoCaja([]).deuda).toBe(0);
+  });
+
+  /**
+   * Echar mano de la gasolina para comprar tambien deja deuda: ese dinero se aparto para cargar
+   * el domingo, y hay que reponerlo. Es un prestamo como el del fondo, no el pago del sobre.
+   */
+  it('sacar de la gasolina para comprar deja deuda igual que el fondo', () => {
+    const previos = [mov('apartado', 'gasolina', 13500)];
+    const origen = origenDelGasto(estadoCaja(previos), 'gasolina', 5000);
+    const movs = movimientosDeGasto({ ...base, concepto: 'Botellas', origen });
+    expect(movs[0]).toMatchObject({ sobre: 'gasolina', centavos: -5000, tipo: 'prestamo' });
+    expect(estadoCaja([...previos, ...movs]).deuda).toBe(5000);
+  });
+
   it('nacen sellados: se corrigen borrando el gasto, no a mano', () => {
-    const movs = movimientosDeGasto({ ...base, origen: origenDelGasto(estadoCaja([]), 15400) });
+    const movs = movimientosDeGasto({
+      ...base,
+      origen: origenDelGasto(estadoCaja([]), 'fondo', 15400),
+    });
     expect(movs[0]).not.toHaveProperty('abierto');
     expect(borrarMovimiento(movs, movs[0]?.id ?? '')).toBeNull();
   });
 
   it('capturar el mismo gasto dos veces no descuenta el doble', () => {
-    const origen = origenDelGasto(estadoCaja([]), 15400);
+    const origen = origenDelGasto(estadoCaja([]), 'fondo', 15400);
     const unaVez = agregarMovimientos([], movimientosDeGasto({ ...base, origen }));
     const dosVeces = agregarMovimientos(unaVez, movimientosDeGasto({ ...base, origen }));
     expect(dosVeces).toHaveLength(unaVez.length);
@@ -636,25 +660,25 @@ describe('sinMovimientosDeGasto', () => {
       ts: 'x',
       fecha: FECHA,
       device: 'd',
-      origen: origenDelGasto(estadoCaja([]), 15400),
+      origen: origenDelGasto(estadoCaja([]), 'fondo', 15400),
     });
     expect(estadoCaja(movs).deuda).toBe(15400);
     expect(estadoCaja(sinMovimientosDeGasto(movs, 'g1')).deuda).toBe(0);
   });
 
-  it('se lleva las dos partes cuando el gasto salio de dos sobres', () => {
-    const previos = [mov('prestamo', 'fondo', -15400), mov('apartado', 'gasolina', 13500)];
+  it('borrar un gasto que salio de la gasolina le devuelve su efectivo a ese sobre', () => {
+    const previos = [mov('apartado', 'gasolina', 13500)];
     const delGasto = movimientosDeGasto({
       gastoId: 'g1',
-      concepto: 'Insumos',
+      concepto: 'Botellas',
       ts: 'x',
       fecha: FECHA,
       device: 'd',
-      origen: origenDelGasto(estadoCaja(previos), 10000),
+      origen: origenDelGasto(estadoCaja(previos), 'gasolina', 5000),
     });
-    expect(delGasto).toHaveLength(2);
     const todos = [...previos, ...delGasto];
-    expect(sinMovimientosDeGasto(todos, 'g1')).toEqual(previos);
+    expect(saldoDe(todos, 'gasolina').hay).toBe(8500);
+    expect(saldoDe(sinMovimientosDeGasto(todos, 'g1'), 'gasolina').hay).toBe(13500);
   });
 
   it('no toca los movimientos de otros gastos ni los capturados a mano', () => {
@@ -827,17 +851,6 @@ describe('cajaParaEsperado', () => {
     const apartado = conFecha(mov('apartado', 'gasolina', 13500), '2026-08-07');
     const pago = conFecha(mov('pago', 'gasolina', -13500), HOY);
     expect(cajaParaEsperado([apartado, pago], HOY)).toBe(32000 + 13500);
-  });
-});
-
-describe('validarTasas', () => {
-  it('lo ilegible cae al apartado de fabrica, no a cero', () => {
-    expect(validarTasas(null)).toEqual(TASAS_INICIALES);
-    expect(validarTasas({ gasolina: 'mucha', gas: -100 })).toEqual(TASAS_INICIALES);
-  });
-
-  it('acepta cero a proposito: apagar un apartado es una decision, no un error', () => {
-    expect(validarTasas({ gasolina: 5000, gas: 0 })).toEqual({ gasolina: 5000, gas: 0 });
   });
 });
 

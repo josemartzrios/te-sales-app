@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AppEvent, SaleEvent } from './tipos';
 import {
+  APARTADO_VACIO,
   FONDO_CAJA,
   FONDO_CAMBIO,
   FONDO_GASTO,
@@ -11,6 +12,7 @@ import {
   calcularReparto,
   centavosDesde,
   cerrarCorte,
+  conApartado,
   conGasto,
   corteDeFecha,
   efectivoEsperado,
@@ -59,7 +61,7 @@ const MAMA_JUANI = gasto('g1', 'Mamá Juani', 4000);
 const GASOLINA = gasto('g2', 'Gasolina', 4500);
 
 function borradorCon(gastos: LineaGasto[]): Borrador {
-  return { fecha: FECHA, gastos };
+  return { fecha: FECHA, gastos, apartado: { ...APARTADO_VACIO } };
 }
 
 // ---------- dinero: formato y captura ----------
@@ -451,7 +453,19 @@ describe('agregarCorte', () => {
 
 describe('borradores', () => {
   it('una fecha sin borrador arranca vacia, no undefined', () => {
-    expect(borradorDe([], FECHA)).toEqual({ fecha: FECHA, gastos: [] });
+    expect(borradorDe([], FECHA)).toEqual({ fecha: FECHA, gastos: [], apartado: APARTADO_VACIO });
+  });
+
+  it('el apartado del dia arranca en cero: nada se aparta si no se teclea', () => {
+    expect(borradorVacio(FECHA).apartado).toEqual({ gasolina: 0 });
+  });
+
+  it('conApartado reemplaza lo capturado sin mutar el borrador anterior', () => {
+    const inicial = borradorVacio(FECHA);
+    const conGasolina = conApartado(inicial, { gasolina: 4500 });
+    expect(inicial.apartado).toEqual(APARTADO_VACIO);
+    expect(conGasolina.apartado).toEqual({ gasolina: 4500 });
+    expect(conApartado(conGasolina, { gasolina: 20000 }).apartado).toEqual({ gasolina: 20000 });
   });
 
   it('agregar y quitar gastos no muta el borrador anterior', () => {
@@ -478,6 +492,13 @@ describe('borradores', () => {
   it('no guarda basura: un borrador sin nada capturado se descarta', () => {
     const conUno = guardarBorrador([], conGasto(borradorVacio(FECHA), MAMA_JUANI));
     expect(guardarBorrador(conUno, borradorVacio(FECHA))).toHaveLength(0);
+  });
+
+  it('un borrador con apartado y sin gastos SI se guarda: lo tecleado no se tira', () => {
+    const soloApartado = conApartado(borradorVacio(FECHA), { gasolina: 4500 });
+    const guardados = guardarBorrador([], soloApartado);
+    expect(guardados).toHaveLength(1);
+    expect(borradorDe(guardados, FECHA).apartado).toEqual({ gasolina: 4500 });
   });
 
   it('conserva el borrador de otra fecha', () => {
@@ -567,7 +588,25 @@ describe('validarBorrador y validarPrecios', () => {
     expect(validarBorrador({ fecha: FECHA, gastos: [], reponerCaja: 15000 })).toEqual({
       fecha: FECHA,
       gastos: [],
+      apartado: APARTADO_VACIO,
     });
+  });
+
+  it('un borrador sin apartado guardado se lee en cero, no con una tarifa', () => {
+    expect(validarBorrador({ fecha: FECHA, gastos: [] })?.apartado).toEqual(APARTADO_VACIO);
+    expect(
+      validarBorrador({ fecha: FECHA, gastos: [], apartado: { gasolina: -1 } })?.apartado
+    ).toEqual(APARTADO_VACIO);
+  });
+
+  it('lee el apartado capturado tal cual, y olvida el gas de los borradores viejos', () => {
+    const borrador = conApartado(borradorVacio(FECHA), { gasolina: 20000 });
+    expect(validarBorrador(JSON.parse(JSON.stringify(borrador)))).toEqual(borrador);
+    // A Mama Juani ya no se le aparta: se le paga con el efectivo del dia y va como gasto.
+    expect(
+      validarBorrador({ fecha: FECHA, gastos: [], apartado: { gasolina: 20000, gas: 4000 } })
+        ?.apartado
+    ).toEqual({ gasolina: 20000 });
   });
 
   it('los precios corruptos caen a los de fabrica, nunca a cero', () => {
