@@ -2,7 +2,13 @@
 <html lang="es">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- interactive-widget=resizes-content: al abrir el teclado, el viewport se encoge al hueco
+         que queda arriba de el en vez de quedar tapado. Como la app mide 100dvh, la barra de abajo
+         sube con el teclado y sigue a la vista para cambiar de pantalla mientras se captura. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
     <!-- La barra del sistema sigue al tema del telefono: en oscuro, una franja blanca arriba
          delata que la app no es del sistema y deslumbra igual que el fondo. -->
     <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)" />

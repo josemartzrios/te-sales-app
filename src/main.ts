@@ -175,7 +175,8 @@ function irAVista(v: Vista): void {
   if (v === 'corte') estado.fechaCorte = claveFecha(new Date());
   estado.vista = v;
   render();
-  window.scrollTo(0, 0);
+  // Quien scrollea es #app, no la ventana: la barra de abajo esta fuera de esa area.
+  app.scrollTo(0, 0);
 }
 
 // ---------- escritura ----------

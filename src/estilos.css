@@ -42,10 +42,21 @@
 
 html {
   -webkit-text-size-adjust: 100%;
+  height: 100%;
 }
 
+/* La app es una columna del alto de la pantalla y el scroll vive dentro de #app, no en la pagina.
+   Con la pagina entera scrolleando, la barra de abajo tenia que ir en position:fixed, y en movil
+   eso se despega: al bajar, el navegador esconde su barra de direcciones, el viewport crece a
+   mitad del gesto y el elemento fijo se queda flotando con un hueco debajo. Siendo el ultimo
+   renglon de la columna no hay nada que reposicionar: se queda abajo porque ahi vive. */
 body {
   margin: 0;
+  height: 100%;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--fondo);
   color: var(--texto);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -56,9 +67,17 @@ body {
 
 /* Columna angosta en cualquier viewport: en escritorio se ve como un telefono, no estirada. */
 #app {
+  /* min-height:0 o el contenido largo estira el flex item en vez de scrollear dentro. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* El rebote al final de la lista no arrastra la pagina de atras ni dispara "recargar". */
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
   max-width: 480px;
   margin: 0 auto;
-  padding: 16px 16px calc(96px + env(safe-area-inset-bottom));
+  padding: 16px 16px 24px;
 }
 
 h1,
@@ -879,13 +898,12 @@ label .detalle {
 
 /* ---------- navegacion ---------- */
 
-/* Fijo de borde a borde, pero los botones viven dentro de la misma columna de 480px. */
+/* Ultimo renglon de la columna del body: no scrollea porque no esta dentro del area que scrollea.
+   Los botones viven dentro de la misma columna de 480px que el contenido. */
 #nav {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  flex: none;
   display: flex;
+  width: 100%;
   max-width: 480px;
   margin: 0 auto;
   background: var(--fondo);
