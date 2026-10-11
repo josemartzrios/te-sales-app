@@ -158,12 +158,12 @@ export function eventosDeHora(
     fecha: string;
     point: string;
     device: string;
-    piezas: Readonly<Record<Vendedor, number>>;
+    piezas: Readonly<Partial<Record<Producto, number>>>;
   }
 ): AppEvent[] {
   const salida: AppEvent[] = [];
 
-  for (const vendedor of VENDEDORES) {
+  for (const vendedor of VENDEDORES_ACTIVOS) {
     if (turnoActual(eventos, vendedor, entrada.fecha)?.point === entrada.point) continue;
     salida.push(
       crearTurno({
@@ -175,19 +175,22 @@ export function eventosDeHora(
     );
   }
 
-  for (const vendedor of VENDEDORES) {
-    const qty = entrada.piezas[vendedor];
-    if (!Number.isInteger(qty) || qty <= 0) continue;
-    salida.push(
-      crearVenta({
-        ts: entrada.ts,
-        point: entrada.point,
-        channel: 'calle',
-        vendor: vendedor,
-        qty,
-        device: entrada.device,
-      })
-    );
+  for (const vendedor of VENDEDORES_ACTIVOS) {
+    for (const producto of PRODUCTOS) {
+      const qty = entrada.piezas[producto];
+      if (qty === undefined || !Number.isInteger(qty) || qty <= 0) continue;
+      salida.push(
+        crearVenta({
+          ts: entrada.ts,
+          point: entrada.point,
+          channel: 'calle',
+          vendor: vendedor,
+          qty,
+          device: entrada.device,
+          product: producto,
+        })
+      );
+    }
   }
 
   return salida;
@@ -237,10 +240,11 @@ export type PlanConteo = {
 export function planConteo(
   eventos: readonly AppEvent[],
   clave: string,
-  contado: Readonly<Record<Vendedor, number | null>>
+  contado: Readonly<Record<Vendedor, number | null>>,
+  producto: Producto = 'botella'
 ): PlanConteo {
-  const lineas = VENDEDORES.map((vendedor): LineaConteo => {
-    const h = hieleraDe(eventos, vendedor, clave);
+  const lineas = VENDEDORES_ACTIVOS.map((vendedor): LineaConteo => {
+    const h = hieleraDe(eventos, vendedor, clave, producto);
     const cuenta = contado[vendedor];
     const diferencia = cuenta === null ? 0 : h.restante - cuenta;
     return {
@@ -620,6 +624,11 @@ export function filtrarRango(ventas: readonly SaleEvent[], rango: Rango, ahora: 
 
 export function filtrarCanal(ventas: readonly SaleEvent[], canal: Canal | 'todo'): SaleEvent[] {
   return canal === 'todo' ? [...ventas] : ventas.filter((v) => v.channel === canal);
+}
+
+/** Deja solo las ventas de un producto: botellas y litros no se suman en la misma hielera. */
+export function filtrarProducto(ventas: readonly SaleEvent[], producto: Producto): SaleEvent[] {
+  return ventas.filter((v) => productoDe(v) === producto);
 }
 
 export function totalPiezas(ventas: readonly SaleEvent[]): number {

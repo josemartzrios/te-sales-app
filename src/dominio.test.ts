@@ -34,6 +34,7 @@ import {
   porPunto,
   porVendedor,
   planConteo,
+  productoDe,
   puedeAgregarPunto,
   quitarPunto,
   resumenTexto,
@@ -1386,85 +1387,109 @@ describe('planCorreccionLugar', () => {
 
 describe('planConteo', () => {
   const HOY = '2026-08-08';
-  const cargados = (fran: number, primo: number): AppEvent[] => [
+  const NADA = { Fran: null, Primo: null } as const;
+  const cargados = (fran: number): AppEvent[] => [
     carga({ id: 'c1', ts: `${HOY}T10:00:00`, vendor: 'Fran', qty: fran }),
-    carga({ id: 'c2', ts: `${HOY}T10:00:00`, vendor: 'Primo', qty: primo }),
   ];
 
   it('lo vendido es lo que falta contra lo que deberia traer', () => {
-    const plan = planConteo(cargados(20, 15), HOY, { Fran: 8, Primo: 5 });
-    expect(plan.piezas).toEqual({ Fran: 12, Primo: 10 });
-    expect(plan.total).toBe(22);
+    const plan = planConteo(cargados(20), HOY, { ...NADA, Fran: 8 });
+    expect(plan.piezas.Fran).toBe(12);
+    expect(plan.total).toBe(12);
     expect(plan.sobrantes).toEqual([]);
+  });
+
+  it('planConteo ya no incluye a Primo aunque haya cargas viejas de Primo ese dia', () => {
+    const eventos = [
+      ...cargados(20),
+      carga({ id: 'c2', ts: `${HOY}T10:00:00`, vendor: 'Primo', qty: 15 }),
+    ];
+    const plan = planConteo(eventos, HOY, { Fran: 8, Primo: 5 });
+    expect(plan.lineas.map((l) => l.vendedor)).toEqual(['Fran']);
+    expect(plan.piezas).toEqual({ Fran: 12 });
+    expect(plan.total).toBe(12);
   });
 
   it('descuenta lo que ya se habia registrado antes en el dia', () => {
     const eventos = [
-      ...cargados(20, 15),
+      ...cargados(20),
       venta({ id: 'v1', ts: `${HOY}T17:00:00`, vendor: 'Fran', qty: 7 }),
     ];
     // Fran trae 13; si cuenta 8 es que se fueron 5 mas, no 12.
-    const plan = planConteo(eventos, HOY, { Fran: 8, Primo: 15 });
+    const plan = planConteo(eventos, HOY, { ...NADA, Fran: 8 });
     expect(plan.piezas.Fran).toBe(5);
-    expect(plan.piezas.Primo).toBe(0);
   });
 
-  it('el campo vacio no es cero: al que no se conto no se le registra nada', () => {
-    const plan = planConteo(cargados(20, 15), HOY, { Fran: null, Primo: 5 });
-    expect(plan.piezas).toEqual({ Fran: 0, Primo: 10 });
+  it('planConteo null no registra nada: el campo vacio no es cero', () => {
+    const plan = planConteo(cargados(20), HOY, NADA);
+    expect(plan.piezas.Fran).toBe(0);
     expect(plan.lineas[0]?.contado).toBeNull();
     expect(plan.sobrantes).toEqual([]);
+    const litros = planConteo(
+      [carga({ id: 'l1', ts: `${HOY}T10:00:00`, vendor: 'Fran', qty: 10, product: 'litro' })],
+      HOY,
+      NADA,
+      'litro'
+    );
+    expect(litros.piezas.Fran).toBe(0);
+    expect(litros.total).toBe(0);
   });
 
   it('contar cero es vender la hielera entera, y eso si se registra', () => {
-    const plan = planConteo(cargados(20, 15), HOY, { Fran: 0, Primo: 15 });
+    const plan = planConteo(cargados(20), HOY, { ...NADA, Fran: 0 });
     expect(plan.piezas.Fran).toBe(20);
   });
 
   it('contar de mas no escribe venta negativa: lo marca como sobrante', () => {
-    const plan = planConteo(cargados(20, 15), HOY, { Fran: 24, Primo: 5 });
+    const plan = planConteo(cargados(20), HOY, { ...NADA, Fran: 24 });
     expect(plan.sobrantes.map((l) => [l.vendedor, l.sobran])).toEqual([['Fran', 4]]);
     expect(plan.piezas.Fran).toBe(0);
   });
 
   it('sin carga registrada cualquier conteo sobra: falta el load', () => {
-    const plan = planConteo([], HOY, { Fran: 8, Primo: null });
+    const plan = planConteo([], HOY, { ...NADA, Fran: 8 });
     expect(plan.sobrantes).toHaveLength(1);
     expect(plan.lineas[0]?.sinCarga).toBe(true);
   });
 
   it('cuadrar exacto no registra piezas pero si deja constancia de que se conto', () => {
-    const plan = planConteo(cargados(20, 15), HOY, { Fran: 20, Primo: 15 });
+    const plan = planConteo(cargados(20), HOY, { ...NADA, Fran: 20 });
     expect(plan.total).toBe(0);
     expect(plan.lineas.every((l) => l.contado !== null)).toBe(true);
   });
 
-  it('las botellas que le pasaron cuentan como suyas al contar', () => {
-    const eventos = [
-      ...cargados(20, 15),
-      traspaso({ id: 't1', ts: `${HOY}T18:00:00`, from: 'Primo', to: 'Fran', qty: 5 }),
-    ];
-    // Fran trae 25 en la mano aunque solo cargo 20: contar 20 es haber vendido 5.
-    const plan = planConteo(eventos, HOY, { Fran: 20, Primo: 10 });
-    expect(plan.piezas).toEqual({ Fran: 5, Primo: 0 });
-  });
-
   it('el mayoreo ya salio de la hielera: no se cobra dos veces', () => {
     const eventos = [
-      ...cargados(20, 15),
+      ...cargados(20),
       venta({ id: 'm1', ts: `${HOY}T12:00:00`, vendor: 'Fran', channel: 'mayoreo', qty: 6 }),
     ];
-    const plan = planConteo(eventos, HOY, { Fran: 10, Primo: null });
+    const plan = planConteo(eventos, HOY, { ...NADA, Fran: 10 });
     expect(plan.piezas.Fran).toBe(4);
   });
 
   it('solo mira el dia que se le pide', () => {
     const eventos = [
-      ...cargados(20, 15),
+      ...cargados(20),
       carga({ id: 'c3', ts: '2026-08-07T10:00:00', vendor: 'Fran', qty: 30 }),
     ];
-    const plan = planConteo(eventos, HOY, { Fran: 8, Primo: null });
+    const plan = planConteo(eventos, HOY, { ...NADA, Fran: 8 });
     expect(plan.piezas.Fran).toBe(12);
+  });
+
+  const conLitros = [
+    carga({ id: 'cb', ts: `${HOY}T10:00:00`, vendor: 'Fran', qty: 20 }),
+    carga({ id: 'cl', ts: `${HOY}T10:00:00`, vendor: 'Fran', qty: 10, product: 'litro' }),
+    venta({ id: 'vb', ts: `${HOY}T11:00:00`, vendor: 'Fran', qty: 3 }),
+  ];
+
+  it('planConteo de litros usa solo la hielera de litros', () => {
+    const plan = planConteo(conLitros, HOY, { ...NADA, Fran: 6 }, 'litro');
+    expect(plan.piezas.Fran).toBe(4);
+  });
+
+  it('planConteo marca sobrantes de litros', () => {
+    const plan = planConteo(conLitros, HOY, { ...NADA, Fran: 12 }, 'litro');
+    expect(plan.sobrantes).toHaveLength(1);
   });
 });
 
@@ -1475,72 +1500,77 @@ describe('eventosDeHora', () => {
   const TS = `${HOY}T17:00:00-07:00`;
   const base = { ts: TS, fecha: HOY, point: 'Plazuela', device: 'd' };
 
-  it('marca el turno de los dos y acredita a cada quien lo suyo', () => {
-    const nuevos = eventosDeHora([], { ...base, piezas: { Fran: 7, Primo: 5 } });
+  it('marca el turno de Fran y acredita lo suyo', () => {
+    const nuevos = eventosDeHora([], { ...base, piezas: { botella: 7 } });
 
     const turnos = nuevos.filter((e) => e.type === 'shift');
-    expect(turnos).toHaveLength(2);
+    expect(turnos).toHaveLength(1);
+    expect(turnos[0]?.vendor).toBe('Fran');
     expect(turnos.every((t) => t.ts === TS)).toBe(true);
 
     const ventas = nuevos.filter((e) => e.type === 'sale');
-    expect(ventas).toHaveLength(2);
-    expect(ventas.map((v) => [v.vendor, v.qty])).toEqual([
-      ['Fran', 7],
-      ['Primo', 5],
-    ]);
+    expect(ventas.map((v) => [v.vendor, v.qty])).toEqual([['Fran', 7]]);
   });
 
-  it('todas las piezas caen en la hora declarada, no en la de ahora', () => {
-    const nuevos = eventosDeHora([], { ...base, piezas: { Fran: 7, Primo: 5 } });
+  it('crea venta de botellas y de litros con la misma marca de tiempo y un solo turno', () => {
+    const nuevos = eventosDeHora([], { ...base, piezas: { botella: 7, litro: 2 } });
+    expect(nuevos.filter((e) => e.type === 'shift')).toHaveLength(1);
+    const ventas = nuevos.filter((e) => e.type === 'sale');
+    expect(ventas).toHaveLength(2);
+    expect(ventas.map((v) => [productoDe(v), v.qty])).toEqual([
+      ['botella', 7],
+      ['litro', 2],
+    ]);
+    expect(ventas[0]).not.toHaveProperty('product');
     expect(nuevos.every((e) => e.ts === TS)).toBe(true);
   });
 
   it('son ventas normales, no retroactivas: asi se trabaja ahora', () => {
-    const ventas = eventosDeHora([], { ...base, piezas: { Fran: 3, Primo: 0 } }).filter(
+    const ventas = eventosDeHora([], { ...base, piezas: { botella: 3 } }).filter(
       (e) => e.type === 'sale'
     );
     expect(ventas[0]).not.toHaveProperty('retro');
     expect(ventas[0]?.channel).toBe('calle');
   });
 
-  it('el que no vendio no genera venta de cero', () => {
-    const nuevos = eventosDeHora([], { ...base, piezas: { Fran: 7, Primo: 0 } });
+  it('el producto en cero no genera venta de cero', () => {
+    const nuevos = eventosDeHora([], { ...base, piezas: { botella: 7, litro: 0 } });
     const ventas = nuevos.filter((e) => e.type === 'sale');
     expect(ventas).toHaveLength(1);
     expect(ventas[0]?.vendor).toBe('Fran');
   });
 
-  it('registrar dos horas del mismo lugar no parte el turno en dos', () => {
-    const primera = eventosDeHora([], { ...base, piezas: { Fran: 7, Primo: 5 } });
+  it('eventosDeHora no repite turno si Fran ya esta en ese punto', () => {
+    const primera = eventosDeHora([], { ...base, piezas: { botella: 7 } });
     const segunda = eventosDeHora(primera, {
       ...base,
       ts: `${HOY}T18:00:00-07:00`,
-      piezas: { Fran: 4, Primo: 3 },
+      piezas: { botella: 4, litro: 1 },
     });
     expect(segunda.filter((e) => e.type === 'shift')).toHaveLength(0);
     expect(segunda.filter((e) => e.type === 'sale')).toHaveLength(2);
   });
 
   it('cambiar de lugar si abre turno nuevo', () => {
-    const primera = eventosDeHora([], { ...base, piezas: { Fran: 7, Primo: 5 } });
+    const primera = eventosDeHora([], { ...base, piezas: { botella: 7 } });
     const segunda = eventosDeHora(primera, {
       ...base,
       point: 'Parque Sinaloa',
       ts: `${HOY}T18:00:00-07:00`,
-      piezas: { Fran: 4, Primo: 3 },
+      piezas: { botella: 4 },
     });
-    expect(segunda.filter((e) => e.type === 'shift')).toHaveLength(2);
+    expect(segunda.filter((e) => e.type === 'shift')).toHaveLength(1);
   });
 
   it('declarar la llegada sin vender nada solo marca el lugar', () => {
-    const nuevos = eventosDeHora([], { ...base, piezas: { Fran: 0, Primo: 0 } });
-    expect(nuevos).toHaveLength(2);
+    const nuevos = eventosDeHora([], { ...base, piezas: {} });
+    expect(nuevos).toHaveLength(1);
     expect(nuevos.every((e) => e.type === 'shift')).toBe(true);
   });
 
   it('no escribe nada cuando ya estaban ahi y nadie vendio', () => {
-    const primera = eventosDeHora([], { ...base, piezas: { Fran: 0, Primo: 0 } });
-    expect(eventosDeHora(primera, { ...base, piezas: { Fran: 0, Primo: 0 } })).toEqual([]);
+    const primera = eventosDeHora([], { ...base, piezas: {} });
+    expect(eventosDeHora(primera, { ...base, piezas: { botella: 0, litro: 0 } })).toEqual([]);
   });
 });
 

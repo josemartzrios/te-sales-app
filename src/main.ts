@@ -309,7 +309,7 @@ function registrarHora(datos: {
     fecha: hoy,
     point: datos.punto,
     device: ajustes.deviceId,
-    piezas: plan.piezas,
+    piezas: { botella: plan.piezas.Fran },
   });
   // Ya estaban ahi y el conteo no bajo: no hay nada que escribir, pero contar y que cuadre no es
   // lo mismo que no haber contado, y el vendedor necesita ver la diferencia.
