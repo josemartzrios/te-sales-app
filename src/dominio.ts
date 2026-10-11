@@ -2,6 +2,7 @@ import type {
   AppEvent,
   Canal,
   LoadEvent,
+  Producto,
   SaleEvent,
   Settings,
   ShiftEvent,
@@ -11,6 +12,9 @@ import type {
 } from './tipos';
 
 export const VENDEDORES: readonly Vendedor[] = ['Fran', 'Primo'];
+/** Quienes venden hoy. VENDEDORES sigue completo para leer el historico (Primo). */
+export const VENDEDORES_ACTIVOS: readonly Vendedor[] = ['Fran'];
+export const PRODUCTOS: readonly Producto[] = ['botella', 'litro'];
 export const CANALES: readonly Canal[] = ['calle', 'mayoreo'];
 export const PUNTOS_INICIALES: readonly string[] = ['Plazuela', 'Parque Sinaloa'];
 export const LARGO_MAXIMO_TEXTO = 100;
@@ -98,6 +102,11 @@ export function isoLocal(d: Date): string {
   );
 }
 
+/** Sin `product` es botella: asi estan escritos todos los eventos anteriores al litro. */
+export function productoDe(e: { product?: Producto }): Producto {
+  return e.product ?? 'botella';
+}
+
 // ---------- creacion de eventos ----------
 
 export function crearVenta(entrada: {
@@ -108,6 +117,7 @@ export function crearVenta(entrada: {
   qty: number;
   device: string;
   retro?: boolean;
+  product?: Producto;
 }): SaleEvent {
   const venta: SaleEvent = {
     id: nuevoId(entrada.device),
@@ -119,7 +129,8 @@ export function crearVenta(entrada: {
     qty: entrada.qty,
     device: entrada.device,
   };
-  return entrada.retro === true ? { ...venta, retro: true } : venta;
+  const conRetro: SaleEvent = entrada.retro === true ? { ...venta, retro: true } : venta;
+  return entrada.product === 'litro' ? { ...conRetro, product: 'litro' } : conRetro;
 }
 
 /**
@@ -275,8 +286,9 @@ export function crearCarga(entrada: {
   vendor: Vendedor;
   qty: number;
   device: string;
+  product?: Producto;
 }): LoadEvent {
-  return {
+  const carga: LoadEvent = {
     id: nuevoId(entrada.device),
     type: 'load',
     ts: entrada.ts,
@@ -284,6 +296,7 @@ export function crearCarga(entrada: {
     qty: entrada.qty,
     device: entrada.device,
   };
+  return entrada.product === 'litro' ? { ...carga, product: 'litro' } : carga;
 }
 
 /**
@@ -715,14 +728,20 @@ export type Hielera = {
 export function hieleraDe(
   eventos: readonly AppEvent[],
   vendedor: Vendedor,
-  clave: string
+  clave: string,
+  producto: Producto = 'botella'
 ): Hielera {
   const delDia = <T extends { ts: string }>(lista: readonly T[]): T[] =>
     lista.filter((e) => claveFecha(e.ts) === clave);
 
-  const cargas = delDia(cargasActivas(eventos)).filter((c) => c.vendor === vendedor);
-  const ventas = delDia(ventasActivas(eventos)).filter((v) => v.vendor === vendedor);
-  const traspasos = delDia(traspasosActivos(eventos));
+  const cargas = delDia(cargasActivas(eventos)).filter(
+    (c) => c.vendor === vendedor && productoDe(c) === producto
+  );
+  const ventas = delDia(ventasActivas(eventos)).filter(
+    (v) => v.vendor === vendedor && productoDe(v) === producto
+  );
+  // Los traspasos solo existen entre hieleras de botella; el litro no se pasa de mano.
+  const traspasos = producto === 'botella' ? delDia(traspasosActivos(eventos)) : [];
 
   const suma = (lista: readonly { qty: number }[]): number =>
     lista.reduce((s, e) => s + e.qty, 0);
@@ -1023,7 +1042,10 @@ export function validarEvento(valor: unknown): AppEvent | null {
     const { vendor, qty } = valor as Record<string, unknown>;
     if (typeof vendor !== 'string' || !VENDEDORES.includes(vendor as Vendedor)) return null;
     if (typeof qty !== 'number' || !Number.isInteger(qty) || qty < 1) return null;
-    return { id, type: 'load', ts, vendor: vendor as Vendedor, qty, device };
+    const carga: LoadEvent = { id, type: 'load', ts, vendor: vendor as Vendedor, qty, device };
+    return (valor as Record<string, unknown>).product === 'litro'
+      ? { ...carga, product: 'litro' }
+      : carga;
   }
 
   if (type === 'shift') {
@@ -1062,9 +1084,13 @@ export function validarEvento(valor: unknown): AppEvent | null {
     device,
   };
   const conRetro: SaleEvent = retro === true ? { ...venta, retro: true } : venta;
+  const conProducto: SaleEvent =
+    (valor as Record<string, unknown>).product === 'litro'
+      ? { ...conRetro, product: 'litro' }
+      : conRetro;
   // El origen se conserva si viene bien escrito y se descarta si no: es una anotacion de
   // historico, no un dato del que dependa ninguna cuenta, y no vale perder la venta por el.
-  return textoValido(movedFrom) ? { ...conRetro, movedFrom } : conRetro;
+  return textoValido(movedFrom) ? { ...conProducto, movedFrom } : conProducto;
 }
 
 export function validarAjustes(valor: unknown, deviceId: string): Settings {

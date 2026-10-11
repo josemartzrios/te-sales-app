@@ -11,6 +11,8 @@ import {
   anularUltimaVenta,
   claveFecha,
   crearAnulacion,
+  crearCarga,
+  crearVenta,
   crearTraspaso,
   duracionLegible,
   enHielera,
@@ -1539,5 +1541,72 @@ describe('eventosDeHora', () => {
   it('no escribe nada cuando ya estaban ahi y nadie vendio', () => {
     const primera = eventosDeHora([], { ...base, piezas: { Fran: 0, Primo: 0 } });
     expect(eventosDeHora(primera, { ...base, piezas: { Fran: 0, Primo: 0 } })).toEqual([]);
+  });
+});
+
+describe('producto', () => {
+  const HOY = '2026-07-30';
+
+  it('hieleraDe separa litros y botellas el mismo dia', () => {
+    const eventos: AppEvent[] = [
+      carga({ id: 'c1', ts: '2026-07-30T07:00:00', qty: 20 }),
+      carga({ id: 'c2', ts: '2026-07-30T07:01:00', qty: 10, product: 'litro' }),
+      venta({ id: 'a', ts: '2026-07-30T09:00:00', qty: 5 }),
+      venta({ id: 'b', ts: '2026-07-30T09:30:00', qty: 3, product: 'litro' }),
+    ];
+    expect(hieleraDe(eventos, 'Fran', HOY).restante).toBe(15);
+    expect(hieleraDe(eventos, 'Fran', HOY, 'litro').restante).toBe(7);
+  });
+
+  it('un evento sin product cuenta como botella', () => {
+    const eventos: AppEvent[] = [
+      carga({ id: 'c1', ts: '2026-07-30T07:00:00', qty: 20 }),
+      venta({ id: 'a', ts: '2026-07-30T09:00:00', qty: 5 }),
+    ];
+    expect(hieleraDe(eventos, 'Fran', HOY, 'litro').cargado).toBe(0);
+    expect(hieleraDe(eventos, 'Fran', HOY).cargado).toBe(20);
+  });
+
+  it('los traspasos solo aplican a botella', () => {
+    const eventos: AppEvent[] = [
+      carga({ id: 'c1', ts: '2026-07-30T07:00:00', qty: 20, product: 'litro' }),
+      traspaso({ id: 't1', ts: '2026-07-30T08:00:00', from: 'Primo', to: 'Fran', qty: 4 }),
+    ];
+    expect(hieleraDe(eventos, 'Fran', HOY, 'litro').recibido).toBe(0);
+    expect(hieleraDe(eventos, 'Fran', HOY).recibido).toBe(4);
+  });
+
+  it('crearVenta con product litro lo escribe; sin product no agrega el campo', () => {
+    const base = {
+      ts: '2026-07-30T09:00:00',
+      point: 'Plazuela',
+      channel: 'calle' as const,
+      vendor: 'Fran' as const,
+      qty: 1,
+      device: 'dev1',
+    };
+    expect(crearVenta({ ...base, product: 'litro' }).product).toBe('litro');
+    expect('product' in crearVenta(base)).toBe(false);
+    expect('product' in crearVenta({ ...base, product: 'botella' })).toBe(false);
+    const c = { ts: base.ts, vendor: 'Fran' as const, qty: 5, device: 'dev1' };
+    expect(crearCarga({ ...c, product: 'litro' }).product).toBe('litro');
+    expect('product' in crearCarga(c)).toBe(false);
+  });
+
+  it('validarEvento conserva product litro y descarta valores invalidos', () => {
+    const v = venta({ id: 'a', ts: '2026-07-30T09:00:00', product: 'litro' });
+    expect(validarEvento(v)).toEqual(v);
+    const c = carga({ id: 'c', ts: '2026-07-30T07:00:00', product: 'litro' });
+    expect(validarEvento(c)).toEqual(c);
+    const malo = validarEvento({ ...v, product: 'x' });
+    expect(malo).not.toBeNull();
+    expect(malo && 'product' in malo).toBe(false);
+  });
+
+  it('validarEvento sigue aceptando Primo y transfer', () => {
+    const p = venta({ id: 'p', ts: '2026-07-30T09:00:00', vendor: 'Primo' });
+    expect(validarEvento(p)).toEqual(p);
+    const t = traspaso({ id: 't', ts: '2026-07-30T08:00:00', from: 'Primo', to: 'Fran', qty: 3 });
+    expect(validarEvento(t)).toEqual(t);
   });
 });
