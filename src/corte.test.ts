@@ -366,7 +366,7 @@ describe('cerrarCorte', () => {
   });
 
   it('congela los precios con los que se calculo', () => {
-    expect(corte.precios).toEqual({ calle: 2000, mayoreo: 1400 });
+    expect(corte.precios).toEqual({ calle: 2000, mayoreo: 1400, litro: 3500 });
   });
 
   it('congela el reparto: no se recalcula al leerlo', () => {
@@ -610,9 +610,17 @@ describe('validarBorrador y validarPrecios', () => {
   });
 
   it('los precios corruptos caen a los de fabrica, nunca a cero', () => {
-    expect(validarPrecios(null)).toEqual({ calle: 2000, mayoreo: 1400 });
-    expect(validarPrecios({ calle: 0, mayoreo: 'gratis' })).toEqual({ calle: 2000, mayoreo: 1400 });
-    expect(validarPrecios({ calle: 2500, mayoreo: 1600 })).toEqual({ calle: 2500, mayoreo: 1600 });
+    expect(validarPrecios(null)).toEqual({ calle: 2000, mayoreo: 1400, litro: 3500 });
+    expect(validarPrecios({ calle: 0, mayoreo: 'gratis' })).toEqual({
+      calle: 2000,
+      mayoreo: 1400,
+      litro: 3500,
+    });
+    expect(validarPrecios({ calle: 2500, mayoreo: 1600 })).toEqual({
+      calle: 2500,
+      mayoreo: 1600,
+      litro: 3500,
+    });
   });
 });
 
@@ -677,5 +685,59 @@ describe('resumenCorte', () => {
 
     const debiendo = resumenCorte(cerrarCorte({ ...base, caja: { hay: 38000, deuda: 2500 } }));
     expect(debiendo).toContain('Debemos a la caja: $25.00');
+  });
+});
+
+// ---------- litro ----------
+
+describe('litro en el corte', () => {
+  const cierre = (eventos: AppEvent[]) =>
+    cerrarCorte({
+      borrador: borradorCon([MAMA_JUANI]),
+      ingreso: ingresoDeFecha(eventos, FECHA, PRECIOS_INICIALES),
+      precios: PRECIOS_INICIALES,
+      device: 'dev1',
+      cerradoEn: `${FECHA}T22:10:00-07:00`,
+    });
+
+  it('ingresoDeFecha suma litros x 3500 sin tocar calle', () => {
+    const eventos: AppEvent[] = [
+      venta({ id: 'v1', qty: 10 }),
+      venta({ id: 'v2', qty: 4, product: 'litro' }),
+    ];
+    const ingreso = ingresoDeFecha(eventos, FECHA, PRECIOS_INICIALES);
+
+    expect(ingreso.litro).toEqual({ piezas: 4, centavos: 14000 });
+    expect(ingreso.calle.piezas).toBe(10);
+    expect(ingreso.total).toBe(10 * 2000 + 14000);
+  });
+
+  it('un litro anulado no entra', () => {
+    const eventos: AppEvent[] = [
+      venta({ id: 'v2', qty: 4, product: 'litro' }),
+      { id: 'x1', type: 'void', ts: `${FECHA}T18:00:00-07:00`, refId: 'v2', device: 'dev1' },
+    ];
+    expect(ingresoDeFecha(eventos, FECHA, PRECIOS_INICIALES).litro.piezas).toBe(0);
+  });
+
+  it('validarPrecios sin litro usa 3500', () => {
+    expect(validarPrecios({ calle: 2000, mayoreo: 1400 }).litro).toBe(3500);
+  });
+
+  it('validarCorte de un corte viejo sin ingreso.litro conserva su total', () => {
+    const corte = cierre(loteDe18());
+    const viejo = JSON.parse(JSON.stringify(corte));
+    delete viejo.ingreso.litro;
+    delete viejo.precios.litro;
+    const leido = validarCorte(viejo);
+
+    expect(leido?.ingreso.litro).toEqual({ piezas: 0, centavos: 0 });
+    expect(leido?.ingreso.total).toBe(corte.ingreso.total);
+  });
+
+  it('resumenCorte muestra la linea de litros solo si hay litros', () => {
+    expect(resumenCorte(cierre(loteDe18()))).not.toContain('Litros');
+    const con = resumenCorte(cierre([venta({ id: 'v2', qty: 4, product: 'litro' })]));
+    expect(con).toContain('Litros: 4 × $35.00 = $140.00');
   });
 });

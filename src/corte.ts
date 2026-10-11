@@ -1,5 +1,12 @@
 import type { AppEvent } from './tipos';
-import { LARGO_MAXIMO_TEXTO, claveFecha, fechaLegible, totalPiezas, ventasActivas } from './dominio';
+import {
+  LARGO_MAXIMO_TEXTO,
+  claveFecha,
+  fechaLegible,
+  filtrarProducto,
+  totalPiezas,
+  ventasActivas,
+} from './dominio';
 
 /**
  * Corte de caja del dia. Solo LEE los eventos del registro de ventas: nunca los modifica,
@@ -14,6 +21,8 @@ import { LARGO_MAXIMO_TEXTO, claveFecha, fechaLegible, totalPiezas, ventasActiva
 /** Precios de fabrica. Se pueden cambiar en la vista Corte y quedan congelados en cada cierre. */
 export const PRECIO_CALLE = 2000;
 export const PRECIO_MAYOREO = 1400;
+/** El litro solo se vende en la calle: no tiene precio de mayoreo. */
+export const PRECIO_LITRO = 3500;
 
 /**
  * Fondos rotatorios de la caja, en centavos. NO son gastos ni se restan del reparto:
@@ -36,6 +45,8 @@ export type Precios = {
   calle: number;
   /** Centavos por pieza vendida a mayoreo. */
   mayoreo: number;
+  /** Centavos por litro vendido en la calle. */
+  litro: number;
 };
 
 export type LineaGasto = {
@@ -88,6 +99,8 @@ export type IngresoCanal = {
 export type Ingreso = {
   calle: IngresoCanal;
   mayoreo: IngresoCanal;
+  /** Litros vendidos en la calle. calle y mayoreo cuentan solo botellas. */
+  litro: IngresoCanal;
   total: number;
 };
 
@@ -153,7 +166,11 @@ export type CorteCerrado = {
   reparto: Reparto;
 };
 
-export const PRECIOS_INICIALES: Precios = { calle: PRECIO_CALLE, mayoreo: PRECIO_MAYOREO };
+export const PRECIOS_INICIALES: Precios = {
+  calle: PRECIO_CALLE,
+  mayoreo: PRECIO_MAYOREO,
+  litro: PRECIO_LITRO,
+};
 
 export function borradorVacio(fecha: string): Borrador {
   return { fecha, gastos: [], apartado: { ...APARTADO_VACIO } };
@@ -207,15 +224,19 @@ export function ingresoDeFecha(
   precios: Precios
 ): Ingreso {
   const delDia = ventasActivas(eventos).filter((v) => claveFecha(v.ts) === fecha);
-  const piezasCalle = totalPiezas(delDia.filter((v) => v.channel === 'calle'));
-  const piezasMayoreo = totalPiezas(delDia.filter((v) => v.channel === 'mayoreo'));
+  const botellas = filtrarProducto(delDia, 'botella');
+  const litros = filtrarProducto(delDia, 'litro');
+  const piezasCalle = totalPiezas(botellas.filter((v) => v.channel === 'calle'));
+  const piezasMayoreo = totalPiezas(botellas.filter((v) => v.channel === 'mayoreo'));
+  const piezasLitro = totalPiezas(litros.filter((v) => v.channel === 'calle'));
 
   const calle: IngresoCanal = { piezas: piezasCalle, centavos: piezasCalle * precios.calle };
   const mayoreo: IngresoCanal = {
     piezas: piezasMayoreo,
     centavos: piezasMayoreo * precios.mayoreo,
   };
-  return { calle, mayoreo, total: calle.centavos + mayoreo.centavos };
+  const litro: IngresoCanal = { piezas: piezasLitro, centavos: piezasLitro * precios.litro };
+  return { calle, mayoreo, litro, total: calle.centavos + mayoreo.centavos + litro.centavos };
 }
 
 // ---------- aritmetica del corte ----------
@@ -307,6 +328,7 @@ export function cerrarCorte(entrada: {
     ingreso: {
       calle: { ...entrada.ingreso.calle },
       mayoreo: { ...entrada.ingreso.mayoreo },
+      litro: { ...entrada.ingreso.litro },
       total: entrada.ingreso.total,
     },
     gastos: entrada.borrador.gastos.map((g) => ({ ...g })),
@@ -411,10 +433,11 @@ function validarLineas(valor: unknown, minimo: number): LineaGasto[] {
 
 export function validarPrecios(valor: unknown): Precios {
   if (typeof valor !== 'object' || valor === null) return { ...PRECIOS_INICIALES };
-  const { calle, mayoreo } = valor as Record<string, unknown>;
+  const { calle, mayoreo, litro } = valor as Record<string, unknown>;
   return {
     calle: centavosValidos(calle, 1) ? calle : PRECIO_CALLE,
     mayoreo: centavosValidos(mayoreo, 1) ? mayoreo : PRECIO_MAYOREO,
+    litro: centavosValidos(litro, 1) ? litro : PRECIO_LITRO,
   };
 }
 
@@ -497,10 +520,19 @@ export function validarCorte(valor: unknown): CorteCerrado | null {
 
   const ingresoBruto = campos['ingreso'];
   if (typeof ingresoBruto !== 'object' || ingresoBruto === null) return null;
-  const { calle, mayoreo, total } = ingresoBruto as Record<string, unknown>;
+  const { calle, mayoreo, litro, total } = ingresoBruto as Record<string, unknown>;
   const canalCalle = validarCanal(calle);
   const canalMayoreo = validarCanal(mayoreo);
-  if (canalCalle === null || canalMayoreo === null || !centavosValidos(total, 0)) return null;
+  // Los cortes cerrados antes del litro no traen la linea: se leen en cero, su total no cambia.
+  const canalLitro = litro === undefined ? { piezas: 0, centavos: 0 } : validarCanal(litro);
+  if (
+    canalCalle === null ||
+    canalMayoreo === null ||
+    canalLitro === null ||
+    !centavosValidos(total, 0)
+  ) {
+    return null;
+  }
 
   const reparto = validarReparto(campos['reparto']);
   if (reparto === null) return null;
@@ -520,7 +552,7 @@ export function validarCorte(valor: unknown): CorteCerrado | null {
     cerradoEn: campos['cerradoEn'],
     device: campos['device'],
     precios: validarPrecios(campos['precios']),
-    ingreso: { calle: canalCalle, mayoreo: canalMayoreo, total },
+    ingreso: { calle: canalCalle, mayoreo: canalMayoreo, litro: canalLitro, total },
     gastos: validarLineas(campos['gastos'], 1),
     reponerCaja: centavosValidos(campos['reponerCaja'], 0) ? campos['reponerCaja'] : 0,
     ajustes: validarLineas(campos['ajustes'], -MONTO_MAXIMO),
@@ -548,6 +580,11 @@ export function resumenCorte(corte: CorteCerrado): string {
   if (ingreso.mayoreo.piezas > 0) {
     lineas.push(
       `Mayoreo: ${ingreso.mayoreo.piezas} × ${importe(precios.mayoreo)} = ${importe(ingreso.mayoreo.centavos)}`
+    );
+  }
+  if (ingreso.litro.piezas > 0) {
+    lineas.push(
+      `Litros: ${ingreso.litro.piezas} × ${importe(precios.litro)} = ${importe(ingreso.litro.centavos)}`
     );
   }
   lineas.push(`Ingreso: ${importe(ingreso.total)}`, '');

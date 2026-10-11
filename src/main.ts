@@ -932,7 +932,7 @@ function cambiarPrecios(calle: string, mayoreo: string): void {
     toast('Precio invalido');
     return;
   }
-  const nuevos: Precios = { calle: porCalle, mayoreo: porMayoreo };
+  const nuevos: Precios = { calle: porCalle, mayoreo: porMayoreo, litro: precios.litro };
   const error = escribirPrecios(nuevos);
   if (error !== null) {
     toast(error, 5000);
