@@ -386,15 +386,15 @@ mismo dinero regresando a su lugar.
 
 ```
 Día 1: se sacan 245 de la caja, se compran insumos por 245
-       gasto "Insumos 245"  →  utilidad −245  (−122.50 cada quien)
+       gasto "Insumos 245"  →  utilidad −245
 
 Día 2: entran 600 y se devuelven los 245 a la caja
-       utilidad +600  (+300 cada quien)
+       utilidad +600
 
-       Los dos días: 600 − 245 = 355  →  177.50 cada quien.  ✅
+       Los dos días: 600 − 245 = 355  →  355 para Fran.  ✅
 ```
 
-Restar también la reposición daría 55 por cabeza en vez de 177.50: el mismo gasto cobrado dos veces. Es el
+Restar también la reposición daría 110 en vez de 355: el mismo gasto cobrado dos veces. Es el
 mismo error del fondo y el cambio, escondido en otra línea. **Ningún movimiento de la caja toca la utilidad.**
 
 ### Los cuatro movimientos
@@ -453,7 +453,7 @@ Los $200 prestados ya van dentro del gasto de $218; restarlos también del saldo
 el bulto. Se asume que **todo préstamo termina en un gasto del negocio**, que es como se opera.
 
 La única salida que sí se resta aparte es el **sueldo de Primo** (solo existe si le quedó saldo de cuando
-eran dos): su mitad ya salió de la utilidad el día que se ganó, así que pagársela mueve efectivo sin volver
+eran dos): ese saldo ya salió de la utilidad el día que se ganó, cuando había dos socios, así que pagarlo mueve efectivo sin volver
 a costar. La gasolina y el gas no entran ahí: cuando se
 pagan desde el corte llevan detrás su línea de gasto, que ya bajó la utilidad.
 
