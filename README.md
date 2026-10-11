@@ -1,7 +1,11 @@
 # Refreskté — registro de ventas
 
 PWA offline-first para registrar ventas de té embotellado en la calle. Sin backend, sin cuentas, sin costo.
-El caso común (una venta de calle) es **un toque**.
+El caso común es contar **cuántas botellas te quedan** y listo.
+
+> **Un solo vendedor.** Vende Fran y todo el corte es suyo; ya no hay reparto mitad y mitad. Lo anterior
+> con Primo se conserva: los cortes cerrados, sus ventas, cargas y traspasos se siguen leyendo igual, y su
+> sobre ("Sueldo de Primo") aparece solo mientras tenga saldo pendiente, que se puede cobrar.
 
 ## Cómo se usa, día a día
 
@@ -15,53 +19,52 @@ normal, a pantalla completa y sin barra del navegador. Cada teléfono lleva sus 
 
 ### 1. Al salir: cargar la hielera
 
-En **Vender**, abajo, tocar **Cargar hielera**. Poner las piezas que se llevan (los botones `18` y `19` son
-atajos, o se escribe la cantidad) y **Cargar**.
+En **Vender**, abajo, tocar **Cargar hielera**. Elegir **Botellas** o **Litros**, poner las piezas que se
+llevan (los botones `18` y `19` son atajos, o se escribe la cantidad) y **Cargar**.
 
 Hazlo cada mañana. La app no arrastra saldo de ayer: cada día empieza en cero y lo que sobró se vuelve a
-cargar si vuelve a salir. Si a lo largo del día se recarga, se registra otra vez y **se suma**.
+cargar si vuelve a salir. Si a lo largo del día se recarga, se registra otra vez y **se suma**. Cada
+producto lleva su propia hielera.
 
 ### 2. El lugar
 
 El lugar (el **turno**) dice a dónde se acredita cada pieza. Con el registro por rato se elige ahí mismo y
-no hay que declararlo aparte: registrar abre el turno **de los dos** a la hora que le pongas, porque salen
-juntos al mismo punto.
+no hay que declararlo aparte: registrar abre el turno a la hora que le pongas.
 
 Si vas a **contar en vivo** con el `+1`, sí hay que marcar el lugar antes de la primera venta: sin turno la
-app no muestra el botón, porque no sabría a dónde acreditar la pieza. Y arriba se elige de quién es la venta
-(**Fran** o **Primo**) — ese selector decide a quién se acredita cada toque y a quién le pega el `−1`.
+app no muestra el botón, porque no sabría a dónde acreditar la pieza.
 
 ### 3. Vender
 
-Arriba de **Vender** está el registro por rato, que es como se trabaja: **lugar**, **hora de llegada** y
-**cuántas botellas quedan en cada hielera**. No se teclea lo vendido: se cuenta lo que sobra, que es más
-fácil de hacer en la calle. Un solo *Registrar* y queda.
+Lo primero en **Vender** es el registro por rato, que es como se trabaja. No se teclea lo vendido: se
+cuenta lo que sobra, que es más fácil de hacer en la calle. Un solo *Registrar* y queda.
 
 ```
-¿Dónde y a qué hora?
-Lugar    [ Plazuela   v ]
-Llegamos [ 17:00        ]
+¿Cuántas te quedan?
+[ 8 ]                 traes 20
 
-Cuenta lo que queda en la hielera
-Fran · trae 20  [ 8 ]   Primo · trae 15  [ 5 ]
+Lugar        [ Plazuela   v ]
+Desde las    [ 17:00        ]
 
 [        Registrar        ]
+  Cargar hielera · Mayoreo
 ```
 
-La app hace la resta: Fran traía 20 y quedan 8, **se fueron 12**. Eso escribe el turno de los dos a esa hora
-y una venta por vendedor con lo suyo. Es la operación inversa de la hielera — si el restante sale de restarle
-lo vendido a lo cargado, lo vendido sale de restarle lo contado al restante.
+El campo grande es el de botellas y su pista dice cuántas **debería traer** (`traes 20`). Si hoy se
+cargaron **litros**, aparece debajo una fila más chica para contarlos; si no se cargaron, no aparece.
+Después va el lugar y la hora, y *Registrar*.
+
+La app hace la resta: traías 20 y quedan 8, **se fueron 12**. Eso escribe el turno a esa hora y una venta
+de calle con lo que se fue. Es la operación inversa de la hielera — si el restante sale de restarle lo
+vendido a lo cargado, lo vendido sale de restarle lo contado al restante.
 
 **Se cuenta al cerrar el rato, pero la hora que se teclea es la de llegada.** Así las piezas caen en el lugar
 y en la franja en que de verdad se fueron, que es como se lee la cuadrícula de lugar × hora. La hora arranca
 en la de ahora en punto y se teclea encima si se llegó antes.
 
-**El campo vacío no es cero: es "a este no lo conté"**, y a ese vendedor no se le registra nada. Un `0`
-tecleado sí cuenta, y significa que vendió la hielera entera. Por eso el campo vacío muestra un guion.
-
-**Las piezas se capturan por vendedor, no juntas.** La hielera, el cuadre del día y las stats por persona
-viven de saber quién vendió qué; partir un total a la mitad inventaría un dato que nadie contó y haría que el
-cuadre marcara rojo sin que hubiera error.
+**El campo vacío no es cero: es "no lo conté"**, y a ese producto no se le registra nada. Un `0` tecleado sí
+cuenta, y significa que vendiste la hielera entera. Por eso el campo vacío muestra un guion y **Registrar
+queda apagado** hasta que haya al menos un número.
 
 **Registrar dos horas del mismo lugar no parte el turno en dos**: es un solo rato ahí, y las piezas caen en
 su franja. Cambiar de lugar sí abre turno nuevo.
@@ -69,9 +72,9 @@ su franja. Cambiar de lugar sí abre turno nuevo.
 #### Si cuentas más botellas de las que deberías traer
 
 Físicamente eso no sale de la nada: es una carga que no se registró. La captura **se detiene** y lo dice —
-*"Fran cuenta 12 y debería traer 8: sobran 4"* — con un botón para abrir **Cargar hielera** ahí mismo.
-Registras las que faltan y vuelves a contar. No se escribe nada a medias: los dos números se tecleron juntos
-y se vuelven a teclear juntos.
+*"Botellas: cuentas 12 y deberías traer 8. Sobran 4."* — con un botón para abrir **Cargar hielera** ahí
+mismo, ya en el producto que sobra. Registras las que faltan y vuelves a contar. No se escribe nada a
+medias, **ni del otro producto**: los números se tecleron juntos y se vuelven a teclear juntos.
 
 #### Lo que esto implica y con el `+1` no pasaba
 
@@ -82,8 +85,8 @@ el arreglo es un campo de "no cobradas" junto al conteo.
 
 ### Contar en vivo
 
-Más abajo sigue el botón grande **`+1 · Fran`**, un toque por botella, para el rato que se quiera contar en
-vivo. La app guarda sola la hora y el lugar.
+Más abajo, bajo *¿Contar en vivo?*, sigue el botón grande **`+1`**, un toque por botella, para el rato que
+se quiera contar en vivo. La app guarda sola la hora y el lugar. El conteo en vivo es de botellas.
 
 - **`+2`** y **`+3`** para cuando se llevan varias de un jalón.
 - La tarjeta de arriba va diciendo dónde estás, desde qué hora, cuánto llevas ahí y cuántas piezas van.
@@ -93,50 +96,49 @@ vivo. La app guarda sola la hora y el lugar.
 ### 4. Al cambiar de lugar
 
 Tocar **Cambiar** en la tarjeta y elegir el lugar nuevo. Ya está: el turno anterior se cierra solo a esa
-hora, no hay botón de "terminar". Igual que al marcar, mueve a los dos.
+hora, no hay botón de "terminar".
 
-### 5. Cuando uno se queda sin botellas
-
-Botón **Pasar botellas**, abajo. Se elige quién las pasa y cuántas. **Mitad y mitad** precarga las que
-dejarían a los dos parejos, y el número se puede editar antes de confirmar: el que cuenta es quien las
-trae en la mano, no la app.
-
-Esto **no es una venta ni una carga**: las botellas solo cambian de hielera. El total que salió de casa
-no se mueve, y el dinero del día tampoco. Sirve para que el que se queda sin nada siga vendiendo sin que
-su hielera se vaya a números rojos y la del otro quede con piezas fantasma.
-
-### 6. Mayoreo
+### 5. Mayoreo
 
 Botón **Mayoreo**, abajo. Ahí sí se elige el punto a mano y se pone la cantidad. Registra solo piezas; el
-precio ($14) lo aplica el **Corte** al cerrar el día. Salen de la misma hielera, así que también la descuentan.
+precio ($14) lo aplica el **Corte** al cerrar el día. Sale de la misma hielera de botellas, así que también
+la descuenta. El litro **no se vende a mayoreo**.
+
+### 6. El litro
+
+Es la botella de 1 litro, a **$35**, y solo se vende en la calle. Tiene su propia hielera: se carga con el
+selector **Litros** de *Cargar hielera*, se cuenta en la fila de litros de *¿Cuántas te quedan?* y cuadra
+aparte. En el Corte lleva su propia línea (`Litros: n × $35`). Una venta sin producto (todo lo anterior a
+esto) cuenta como botella.
 
 ### 7. Al cerrar: revisar
 
-En **Hoy** se ve el día de cada vendedor: lo que le queda en la hielera, cuánto vendió, su ritmo por hora,
-su mejor lugar y su mejor hora, y **la lista de turnos** — cada lugar con su franja (`17:03–18:10`), sus
+En **Hoy** se ve el día: lo que te queda en la hielera, cuánto vendiste, tu ritmo por hora,
+tu mejor lugar y tu mejor hora (los litros salen aparte, solo el día que se movieron), y **la lista de turnos** — cada lugar con su franja (`17:03–18:10`), sus
 piezas y su ritmo. Es la lectura de "¿qué tal estuvo la Plazuela hoy de 5 a 6?".
 
-Abajo, el **Cuadre del día** verifica que `cargadas + recibidas = vendidas + pasadas + restantes`, y dice
-cuántas piezas salieron de casa — el número que se cuenta contra lo que se llevó. Si marca `!` en rojo,
-alguien vendió más piezas de las que tuvo en las manos: falta registrar una carga, o el traspaso quedó
-mal contado.
+Abajo, el **Cuadre del día** verifica que `cargadas + recibidas = vendidas + pasadas + restantes` (las
+botellas y, si hubo, los litros por separado), y dice cuántas piezas salieron de casa — el número que se
+cuenta contra lo que se llevó. Si marca `!` en rojo, vendiste más piezas de las que tenías: falta
+registrar una carga. (En días viejos con traspasos entre hieleras también puede ser un traspaso mal contado.)
 
 Para comparar días o buscar la mejor hora de cada lugar, **`⋯` → Stats** → la cuadrícula **Lugar × hora**.
 
 ### 8. Al cerrar: el corte de caja
 
-En **Corte**, el ingreso del día ya viene sumado de las ventas (calle × $20, mayoreo × $14), desglosado por
+En **Corte**, el ingreso del día ya viene sumado de las ventas (calle × $20, mayoreo × $14, litros × $35), desglosado por
 canal para validarlo de un vistazo contra el efectivo real. Se capturan los gastos línea por línea
 (concepto + de qué sobre salió + monto), abajo se teclea lo que **se aparta hoy** para la gasolina del
 domingo —vacío el día que no se aparte nada— y al final, en un solo bloque, baja el desglose completo:
-ingreso, gastos del día, lo apartado, y lo que queda para repartir mitad y mitad.
+ingreso, gastos del día, lo apartado, y lo que queda (el bloque se titula *Se reparte*, pero ya no se
+parte con nadie: es **lo tuyo**).
 
 Después, **Al cerrar** dice lo único que hay que ejecutar: cuánto efectivo debería haber en el bulto,
 para compararlo contra el bulto. Ese número sale de cómo está la caja, y **Ver la caja** lleva directo a la
 pestaña donde se arregla.
 
 La caja tiene **pestaña propia**, porque responde otra pregunta que el corte. Ahí se ve cuánto hay en cada
-sobre (fondo, cambio, gasolina, gas, lo tuyo y el sueldo de Primo), cuánto se le debe si se tomó prestado, y se registra
+sobre (fondo, cambio, gasolina, gas y lo tuyo; el sueldo de Primo solo si le queda saldo), cuánto se le debe si se tomó prestado, y se registra
 un movimiento con tres campos —sobre, cantidad y concepto— y dos botones: **Entró** o **Salió**. El signo lo
 pone el botón y no se teclea.
 
@@ -148,17 +150,17 @@ Luego, el respaldo entre los dos teléfonos: ver **Ritual diario** más abajo.
 
 ### Si te equivocas
 
-- **Un toque de más:** el botón **`−1`** anula la última venta **del vendedor seleccionado** en ese lugar.
+- **Un toque de más:** el botón **`−1`** anula tu última venta de calle en ese lugar.
   No pregunta nada; si también le picas de más, un `+1` lo arregla. Ojo: se lleva **la venta completa**,
   así que un `−1` sobre un `+3` quita las tres piezas y hay que volver a capturarlas. Si el `−1` está
-  apagado es que ese vendedor no tiene ventas de calle en este lugar hoy — revisa el selector de arriba.
+  apagado es que no hay ventas de calle tuyas en este lugar hoy.
 - **Te moviste y se te olvidó marcar el lugar:** el caso clásico — estabas en Parque Sinaloa, te fuiste a la
   Plazuela, vendiste, y la pieza se acreditó al parque. Toca **Estábamos en otro lugar** (está en **Vender**,
   debajo de los botones, y también en **Hoy**). Eliges el lugar bueno y **desde qué hora**: esa hora es el
   corte, todo lo vendido de ahí en adelante se pasa. Dos atajos llenan la hora sola, y se llaman por lo que
   hacen: **Solo la última venta** (el toque suelto en el lugar de al lado) y **Todo el turno** (tocaste mal el
   lugar desde que llegaste). Lo de en medio —*me moví a las 17:20 y vendí tres*— se teclea a mano.
-  Antes de confirmar te dice exactamente cuántas piezas va a mover. Marca el lugar para los dos y reacredita
+  Antes de confirmar te dice exactamente cuántas piezas va a mover. Marca el lugar y reacredita
   todas las ventas de esa ventana que se habían ido al lugar viejo.
 - **Una sola venta en el lugar equivocado:** **Hoy** → Movimientos → **Mover** en esa línea. Se anula y se
   vuelve a escribir con **su misma hora** en el lugar correcto, marcada `MOVIDA` y con el lugar de origen a la
@@ -207,8 +209,7 @@ Para instalarla en el teléfono: abrir la URL → menú del navegador → "Agreg
 
 ## Ritual diario: exportar
 
-**El registro es de un solo teléfono.** Como salen juntos al mismo punto, todo se captura ahí: los dos
-vendedores, los dos turnos y los traspasos entre sus hieleras.
+**El registro es de un solo teléfono.** Todo se captura ahí: las ventas, las cargas y los turnos.
 
 Eso quita el paso de consolidar cada noche, pero **hace el respaldo obligatorio**: ese teléfono es el
 único lugar donde existe el día. Antes, el intercambio entre los dos teléfonos servía de copia sin que
@@ -238,23 +239,25 @@ Son seis pantallas y una barra de teléfono: con las seis abajo, cada botón baj
 más larga apenas cabía, y *Ajustes* —que se toca una vez al mes— pesaba lo mismo que *Vender*. Lo de a
 diario tiene que ser lo que se ve.
 
-- **Vender** — el caso común. Arriba, el registro por rato: lugar, hora de llegada y lo que queda en cada
-  hielera, en un solo *Registrar*. Debajo, el conteo en vivo: la tarjeta del turno y el botón grande
-  `+1 · Fran` para las veces que se quiera contar botella por botella. También se carga la hielera y se
-  pasan botellas de una a otra desde aquí.
-- **Hoy** — el tablero del día por vendedor: en hielera, vendió, ritmo por hora, mejor lugar y mejor hora,
-  la lista de turnos con su franja y su ritmo, más las barras por lugar y por hora de esa persona. Abajo,
-  el registro de movimientos (ventas, cargas, lugares y traspasos) con su botón de anular, y la captura
+- **Vender** — el caso común. Arriba, *¿Cuántas te quedan?*, la fila de litros si se cargaron, el lugar y la
+  hora de llegada, en un solo *Registrar*; abajo de él, *Cargar hielera* y *Mayoreo*. Más abajo, el conteo
+  en vivo: la tarjeta del turno y el botón grande `+1` para las veces que se quiera contar botella por
+  botella. En la barra de arriba, **Hielera** y **Hoy** cuentan botellas; los litros salen aparte.
+- **Hoy** — el tablero del día: en hielera, vendió, ritmo por hora, mejor lugar y mejor hora, la lista de
+  turnos con su franja y su ritmo, más las barras por lugar y por hora. Abajo, el registro de movimientos
+  (ventas, cargas y lugares; los traspasos viejos también aparecen) con su botón de anular, y la captura
   retroactiva.
 - **Corte** — el cierre del día en dinero: ingreso calculado de las ventas, gastos capturados a mano, lo que
-  se aparta ese día para la gasolina, utilidad y reparto 50/50. Cerrar el corte lo vuelve un registro
+  se aparta ese día para la gasolina y lo que queda para ti. Los precios (calle, mayoreo y litro) se editan
+  ahí mismo. Cerrar el corte lo vuelve un registro
   inmutable.
-- **Caja** — dónde está el dinero: los seis sobres, lo que se le debe a la caja, la captura de movimientos
+- **Caja** — dónde está el dinero: los sobres (el de Primo solo si trae saldo), lo que se le debe a la caja, la captura de movimientos
   (sobre + cantidad + concepto, Entró o Salió) y el historial. Abajo, el **arqueo** (contar el bulto contra
   el libro) y el **cierre semanal** del domingo.
-- **Stats** (en el `⋯`) — historia: rango (hoy / 7 días / todo), vendedor (ambos / Fran / Primo) y canal.
-  Arriba de todo, la cuadrícula **lugar × hora**: dónde y a qué hora se vende.
-- **Ajustes** (en el `⋯`) — solo configuración: lugares, vendedor por defecto y respaldo.
+- **Stats** (en el `⋯`) — historia: rango (hoy / 7 días / todo), producto (Todo / Botellas / Litros) y canal.
+  Arriba de todo, la cuadrícula **lugar × hora**: dónde y a qué hora se vende. "Por vendedor" sale solo si
+  en el rango vendió más de uno (días con Primo).
+- **Ajustes** (en el `⋯`) — solo configuración: lugares y respaldo.
 
 ### Claro y oscuro
 
@@ -272,17 +275,14 @@ Se vende como una hora aproximada por lugar, así que la app trabaja con esa uni
 el vendedor marca dónde está: eso registra un evento `shift`, que **no cuenta ninguna pieza**, solo dice
 "a las 17:03 Fran se paró en la Plazuela". Desde ahí, cada `+1` se acredita a ese lugar con su hora real.
 
-- **Marcar lugar abre el turno de los dos.** Salen juntos al mismo punto y el registro es de un solo
-  teléfono, así que pedir el lugar una vez por vendedor solo serviría para que se olvide el segundo y
-  las ventas de ese quedaran fuera de turno. Al que ya estaba en ese punto no se le escribe nada.
-- **El turno se cierra solo.** No hay botón de "terminar": el turno acaba cuando ese mismo vendedor marca
-  el siguiente lugar. Cambiar de lugar es un toque, y ahí queda partido el día.
+- **El turno se cierra solo.** No hay botón de "terminar": el turno acaba cuando se marca el siguiente
+  lugar. Cambiar de lugar es un toque, y ahí queda partido el día.
 - El turno abierto de hoy corre **hasta ahora**. El de un día pasado se cierra en su última venta: medirlo
   contra el reloj de hoy inventaría horas que nadie estuvo parado ahí.
 - Una venta le toca a un turno si coinciden **vendedor, lugar y ventana horaria**. No se guarda el turno
   dentro de la venta, así que las retroactivas y lo capturado antes de esta versión también entran solas.
-- El modelo guarda **un turno por vendedor**, aunque hoy la pantalla los mueva juntos: si algún día se
-  separan, el histórico ya lo soporta sin migrar nada y sin que un turno pise al otro.
+- El modelo guarda los turnos **por vendedor**: los de Primo en días viejos se siguen leyendo, sin migrar
+  nada, y hoy solo se escriben los de Fran.
 - Si se vendió sin marcar lugar, esas piezas siguen contando en todos lados, y la vista Hoy avisa cuántas
   **quedaron fuera de turno**. No se pierde nada; solo no se le puede atribuir un rato concreto.
 - Un lugar mal marcado se corrige anulándolo, como todo lo demás. Volver a marcar el lugar en el que ya
@@ -290,32 +290,25 @@ el vendedor marca dónde está: eso registra un evento `shift`, que **no cuenta 
 
 ## La hielera
 
-Cada mañana se registra cuántas piezas salen en la hielera de cada vendedor (evento `load`). Las recargas
+Cada mañana se registra cuántas piezas salen en la hielera (evento `load`), por producto: botellas y litros
+llevan cuenta aparte. Las recargas
 del día **suman**. Lo que se muestra es `cargado + recibido − pasado − vendido`, y descuenta calle *y*
-mayoreo: ambas sacan botellas físicas de la misma hielera.
+mayoreo: ambas sacan botellas físicas de la misma hielera. El litro solo descuenta de la suya.
 
 - **No arrastra saldo entre días.** Cada jornada empieza con lo que se cargue ese día. Lo que sobra se
   regresa; si mañana sale de nuevo, se vuelve a cargar.
-- Sin carga ni traspaso recibido la app muestra `—`, no `0`: un cero inventado se lee como "no le queda
-  nada". Recibir botellas del otro sí cuenta — quien las recibió tiene botellas, aunque no haya cargado.
-- Si vende más de las que tuvo en las manos, la vista Hoy lo dice en rojo. No es un error del conteo de
-  ventas: falta registrar una carga, o (si hubo traspaso ese día) las piezas que se pasaron quedaron mal
-  contadas.
+- Sin carga (ni traspaso recibido, en días viejos) la app muestra `—`, no `0`: un cero inventado se lee como
+  "no te queda nada".
+- Si vendes más de las que tuviste en las manos, la vista Hoy lo dice en rojo. No es un error del conteo de
+  ventas: falta registrar una carga.
 
-### Los traspasos
+### Los traspasos (solo historia)
 
-Cuando uno se acaba su carga y el otro le pasa de las suyas para terminar juntos, eso se registra como un
-evento `transfer`: **la venta es de quien la hace, pero la botella es de quien la cargó**.
+Cuando había dos vendedores, uno podía pasarle botellas al otro, y eso se registraba como un evento
+`transfer`. **Ya no se crean**: no hay segundo vendedor y el botón *Pasar botellas* se quitó. Los
+traspasos de días anteriores se siguen leyendo igual (en Hoy, en el cuadre y en la hielera de esos días), se
+anulan como todo lo demás y no tocaban ni el total del día ni el dinero.
 
-- **No modifica las cargas.** Sumar la pieza a una carga y restarla de la otra dejaría los dos números
-  cuadrados, pero borraría para siempre de quién era la botella que vendió el otro — y ese es justo el
-  dato que hace falta el día que el reparto deje de ser mitad y mitad.
-- **No mueve el total del día.** Los traspasos se cancelan entre las dos hieleras, así que `cargadas`
-  sigue siendo lo que de verdad salió de casa y se puede contar contra lo que se llevó.
-- **No toca el dinero.** El corte lee ventas, no hieleras: el ingreso es el mismo se hayan pasado
-  botellas o no.
-- Va en los dos sentidos y puede haber varios el mismo día.
-- Se anula como todo lo demás, y las piezas regresan a la hielera de donde salieron.
 - El **ritmo por hora** es piezas ÷ el tramo entre la primera y la última venta, con piso de una hora para
   que tres ventas en diez minutos no se reporten como "18 por hora". Junto al número siempre va el tramo
   (`4/h · en 5h`) para que se pueda juzgar.
@@ -323,9 +316,9 @@ evento `transfer`: **la venta es de quien la hace, pero la botella es de quien l
 ## El corte de caja
 
 ```
-Ingreso   = piezas de calle × $20.00 + piezas de mayoreo × $14.00
+Ingreso   = botellas de calle × $20.00 + botellas de mayoreo × $14.00 + litros × $35.00
 Utilidad  = ingreso − gastos
-Fran = Primo = utilidad ÷ 2
+Lo tuyo   = utilidad − lo apartado   (todo es de Fran)
 ```
 
 - **El corte solo LEE las ventas.** No modifica, no migra y no normaliza el histórico. Escribe únicamente
@@ -333,12 +326,12 @@ Fran = Primo = utilidad ÷ 2
 - **Nada de la caja entra en la utilidad.** Los $200 de fondo y los $120 de cambio son rotatorios, no
   costos: el cambio sale en morralla y regresa dentro del efectivo de las ventas, así que restarlo sería
   contarlo dos veces. Y reponer lo prestado tampoco es un costo — ver **La caja** más abajo.
-- **Todo el dinero se maneja en centavos enteros**, nunca en floats. El centavo impar del 50/50 se lo queda
-  Fran, que trae la caja: le toca de más en un día bueno y absorbe de más en uno malo.
-- **Un día en pérdida se reparte igual** (−50/−50). No se bloquea ni se redondea a cero: la ganancia está
-  en el stock de té por vender.
-- El **precio** se puede cambiar abajo en la pantalla Corte. Cada corte cerrado guarda el precio con el que
-  se calculó, así que subirlo mañana no mueve ningún corte pasado.
+- **Todo el dinero se maneja en centavos enteros**, nunca en floats.
+- **Un día en pérdida baja tu sobre** igual. No se bloquea ni se redondea a cero: la ganancia está en el
+  stock de té por vender.
+- Los **precios** (calle, mayoreo y litro) se pueden cambiar abajo en la pantalla Corte, uno junto al otro. Cada corte cerrado guarda el precio con el que
+  se calculó, así que subirlo mañana no mueve ningún corte pasado. Los cortes cerrados antes del litro no traen su línea y
+  se leen igual que siempre.
 
 ### Los cortes cerrados son inmutables
 
@@ -366,9 +359,9 @@ distintos a propósito**, y mezclarlos es el error que cuesta dinero de verdad.
 El ritmo de la semana: **los insumos se cubren con el fondo**, y cada corte del día abona a esa deuda lo que
 alcance. **A Mamá Juani se le paga cada dos lotes** con el efectivo de la venta de ese día —el mismo día si
 salen dos, o al siguiente— así que eso es un gasto del corte y no toca la caja. **El domingo** se carga
-gasolina con lo apartado y se le paga su sueldo a Primo.
+gasolina con lo apartado y, si a Primo le queda saldo de antes, se le paga.
 
-El dinero de la caja vive en seis **sobres**. No son bolsas físicas separadas —el efectivo es un solo
+El dinero de la caja vive en **sobres** (cinco hoy; el de Primo se muestra solo mientras tenga saldo). No son bolsas físicas separadas —el efectivo es un solo
 bulto— sino a quién le toca cada peso:
 
 | Sobre | Qué es | Cómo crece | Cómo baja |
@@ -377,8 +370,8 @@ bulto— sino a quién le toca cada peso:
 | Cambio | $120 rotatorio | fijo, no crece | solo si se toma prestado |
 | Gasolina | provisión | lo que se teclee en el corte del día | al cargar gasolina el domingo |
 | Gas (Mamá Juani) | histórico | ya no se llena: se le paga de la venta del día | al vaciarlo el domingo |
-| Lo tuyo (Fran) | pasivo | su mitad de cada corte cerrado | al cobrarlo |
-| Sueldo de Primo | pasivo | su mitad de cada corte cerrado | al pagarle el domingo |
+| Lo tuyo (Fran) | pasivo | todo lo que queda de cada corte cerrado | al cobrarlo |
+| Sueldo de Primo | histórico | ya no se llena: solo trae el saldo de cortes viejos | al cobrarlo o pagarle el domingo |
 
 ```
 efectivo que debe haber en la caja = Σ sobres − deuda
@@ -412,7 +405,7 @@ ese sobre *debería* tener:
 | Movimiento | Efectivo | Debería haber | Ejemplo |
 | --- | --- | --- | --- |
 | Aparté | + | + | se guarda para gasolina lo que se apartó ese día |
-| Pagué | − | − | se carga gasolina el domingo, se le paga su sueldo a Primo |
+| Pagué | − | − | se carga gasolina el domingo, se le paga a Primo su saldo viejo |
 | Tomé prestado | − | = | sale dinero del fondo para insumos → **deuda** |
 | Devolví | + | = | se regresa con lo que se vendió → **deuda** |
 
@@ -426,8 +419,8 @@ movimiento de caja suelto.
 | Quién | Cuándo | Qué escribe |
 | --- | --- | --- |
 | Gasto del corte | al capturarlo | saca como préstamo del sobre que elegiste, o nada si no salió de la caja |
-| Corte del día | al cerrar | aparta a gasolina lo capturado ese día, y su mitad a cada socio |
-| Cierre semanal | el domingo | paga gasolina, gas y sueldo de Primo, y los deja en cero |
+| Corte del día | al cerrar | aparta a gasolina lo capturado ese día, y el resto va a tu sobre |
+| Cierre semanal | el domingo | paga gasolina, gas y el saldo de Primo (si hay), y los deja en cero |
 
 Por eso la captura son dos botones y no cuatro: *"saqué 18 de la gasolina para las botellas"* y *"cargué
 gasolina el domingo"* son dinero saliendo del mismo sobre, y por el signo son idénticos. Lo que los separa es
@@ -459,8 +452,9 @@ Ahora   + utilidad  120 + (600 − 218)    = 502  ❌ los 200 restados dos veces
 Los $200 prestados ya van dentro del gasto de $218; restarlos también del saldo los cobraría dos veces contra
 el bulto. Se asume que **todo préstamo termina en un gasto del negocio**, que es como se opera.
 
-La única salida que sí se resta aparte es el **sueldo de Primo**: su mitad ya salió de la utilidad el día que
-se ganó, así que pagársela mueve efectivo sin volver a costar. La gasolina y el gas no entran ahí: cuando se
+La única salida que sí se resta aparte es el **sueldo de Primo** (solo existe si le quedó saldo de cuando
+eran dos): su mitad ya salió de la utilidad el día que se ganó, así que pagársela mueve efectivo sin volver
+a costar. La gasolina y el gas no entran ahí: cuando se
 pagan desde el corte llevan detrás su línea de gasto, que ya bajó la utilidad.
 
 ### De qué sobre sale el efectivo de un gasto
@@ -511,7 +505,7 @@ capturar un movimiento**. Revisa el historial antes de ajustar.
 
 ### El cierre semanal (domingo)
 
-Un botón en la pestaña Caja. Paga **lo que hay** en gasolina, gas y sueldo de Primo, y los deja en cero para
+Un botón en la pestaña Caja. Paga **lo que hay** en gasolina, gas y sueldo de Primo (si trae saldo), y los deja en cero para
 que vuelvan a llenarse la semana que entra.
 
 - **Se paga lo que hay, no el objetivo.** Si entre semana se tomaron $18 de la gasolina para unas botellas,
@@ -529,52 +523,44 @@ que vuelvan a llenarse la semana que entra.
    días que se le paga).
 2. De ahí se aparta la gasolina **que se capturó en el corte de ese día**. Nada por defecto: sin captura no
    se aparta nada, y lo tecleado no se recorta aunque pase de la utilidad.
-3. Lo que sobra se parte a la mitad, y cada mitad se va al sobre de su dueño.
+3. Lo que sobra va **completo al sobre de Fran** ("Lo tuyo").
 
 Antes ese monto salía de una tarifa fija ($45 de gasolina y $40 de gas cada día que hubiera ventas), y eso
 apartaba los días que no se cargó gasolina y apartaba de menos los días que se cargó más. Lo que se aparta es
 lo que se deja en la caja con la mano, así que se teclea. Y el gas salió del apartado por completo: **a Mamá
 Juani se le paga cada dos lotes** con el efectivo de ese día, así que es un gasto del corte y nada más.
 
-**El apartado sale antes de repartir, así que lo pagan los dos.** Antes salía solo del lado de Fran —Primo
-cobraba su mitad completa y Fran financiaba la gasolina— y eso no es mitad y mitad:
-
 ```
 Un lote de 18 vendido a $20 = $360, con $154 de té pagados del fondo
 y ese día se apartaron $85 para la gasolina
 
-              ANTES            AHORA
-Utilidad     $206.00          $206.00
-Se apartó          —          -$85.00   <- capturado, se aparta antes de repartir
-Se reparte         —          $121.00
-  Fran         $0.00           $60.50
-  Primo      $103.00           $60.50
-Deuda         $93.50            $0.00
+Utilidad     $206.00
+Se apartó    -$85.00   <- capturado, se aparta antes de repartir
+Se reparte   $121.00
+  Lo tuyo    $121.00
 ```
 
+Los cortes cerrados cuando Primo era socio **no se recalculan**: se siguen mostrando con sus dos tarjetas y
+su reparto mitad y mitad tal como se guardaron.
+
 **La deuda no se cobra al repartir.** Sacar $154 del fondo para comprar el té y capturar el gasto de $154 es
-el mismo peso: el gasto ya bajó la utilidad de los dos, y el fondo se rellena solo con el efectivo que la
-caja retiene. Restar además una línea de "reponer" cobraba el gasto una segunda vez, y completa, a Fran.
+el mismo peso: el gasto ya bajó la utilidad, y el fondo se rellena solo con el efectivo que la caja retiene.
+Restar además una línea de "reponer" cobraba el gasto una segunda vez.
 
-### Por qué Fran también tiene sobre
+### El sobre "Lo tuyo"
 
-Un día malo el repartible es negativo y **bajan los dos sobres**. Nadie pone dinero de su bolsa: el faltante
+Un día malo el repartible es negativo y **baja tu sobre**. Nadie pone dinero de su bolsa: el faltante
 queda registrado y se compensa solo el día que vuelve a haber utilidad.
-
-Antes solo Primo tenía sobre. En un día malo a Primo le bajaba el acumulado y quedaba registrado; a Fran no
-le quedaba nada registrado —se llevaba $0 y el faltante se evaporaba—, así que al día siguiente Primo
-arrancaba desde su saldo real y Fran desde cero, y Fran terminaba absorbiendo la pérdida completa.
 
 ```
 Lunes:  se compra té de $154 del fondo, no se vende
 Martes: se venden $360, sin gastos nuevos
 
-Repartido bien:       $60.50 cada uno
-Sin sobre para Fran:  Primo $137.50, Fran $60.50
+Tu sobre: -154 + 360 = $206
 ```
 
-Cada quien cobra de su sobre cuando quiere, con el botón **Cobrar**. Cobrar es un pago, no un préstamo: ese
-dinero ya era suyo y sacarlo no deja deuda.
+Cobras de tu sobre cuando quieres, con el botón **Cobrar** (igual el saldo viejo de Primo, si hay). Cobrar es un pago, no un préstamo: ese
+dinero ya era tuyo y sacarlo no deja deuda.
 
 Cerrar también **sella los movimientos que quedaban abiertos**: el corte guarda cómo quedó la caja, y un
 movimiento que siguiera editable después desmentiría ese registro inmutable.
@@ -602,22 +588,19 @@ se recalcula el pasado**.
 - Una venta, una carga, un turno o un traspaso se anulan **una sola vez**. Para corregir una carga mal
   capturada se anula y se registra la correcta.
 - El botón **-1** de la pantalla Vender no borra ni resta: anula **entera** la última venta activa de calle
-  **de ese vendedor** en ese punto. Si esa venta traía tres piezas (un `+3`), se van las tres y hay que
+  de Fran en ese punto. Si esa venta traía tres piezas (un `+3`), se van las tres y hay que
   volver a capturar — editarla para dejarla en dos sería escribir sobre el histórico. Se deshabilita
-  cuando ese vendedor va en cero ahí y no pide confirmación: es la corrección de un toque de más, y si
+  cuando vas en cero ahí y no pide confirmación: es la corrección de un toque de más, y si
   también se toca por error basta con un `+1`.
-- **El `-1` filtra por vendedor a propósito.** Los dos venden desde el mismo teléfono y en el mismo lugar:
-  sin ese filtro, corregir un toque de más de uno le quitaría una pieza al otro, y no lo avisaría nadie
-  — el total del día y el dinero salen idénticos, solo cambia a quién se le acreditó.
 - **Corregir el lugar tampoco edita.** Mover una venta de punto es un `void` sobre la vieja más una venta
   nueva con la **misma hora, cantidad, canal y vendedor**, y un campo `movedFrom` con el lugar del que vino
   — sin él la línea nueva sería indistinguible de una venta cualquiera y el histórico no contaría el error.
 - **Corregir el lugar nunca mueve dinero.** El ingreso del corte sale de piezas × precio por canal y no
   mira el punto, así que la corrección es segura incluso sobre una fecha con el corte ya cerrado.
-- **La corrección de turno marca el lugar a los dos y las ventas una por una.** El `shift` se escribe para
-  ambos por la misma razón que al marcar lugar en vivo (salen juntos, un solo teléfono); las ventas se
-  reacreditan por vendedor y solo las del punto que cada quien traía mal, dentro de la ventana que va de la
-  hora indicada hasta el siguiente lugar que ese vendedor marcó — más allá el registro ya decía la verdad.
+- **La corrección de turno solo corrige a quien vende hoy (Fran).** Se escribe el `shift` y se reacreditan
+  las ventas del punto que traías mal, dentro de la ventana que va de la hora indicada hasta el siguiente
+  lugar que marcaste — más allá el registro ya decía la verdad. Las ventas y turnos de Primo en días
+  viejos no se tocan.
 - Quitar un punto en Ajustes solo lo saca de la lista activa: sus ventas históricas siguen contando en Stats.
 - El arreglo de eventos es *append-only*; ninguna función lo muta ni lo reordena en sitio.
 
@@ -629,6 +612,7 @@ netlify.toml          headers + build
 public/               manifest, service worker, iconos
 scripts/              generador de iconos PNG (sin dependencias)
 src/tipos.ts          tipos del dominio
+src/vender.ts          el bloque de conteo de Vender ("¿cuántas te quedan?")
 src/dominio.ts        funciones puras: ventas activas, agregaciones, validación, merge
 src/corte.ts          funciones puras del corte: aritmética en centavos, snapshot, validación
 src/almacenamiento.ts único módulo que toca localStorage
@@ -645,7 +629,9 @@ la hielera del día: no hay almacén, ni costo, ni merma. El corte de caja calcu
 de las piezas registradas y un precio por canal; lo que queda fuera está listado en **Fuera de alcance del
 corte**.
 
-Los traspasos son **solo inventario**: hoy no tocan el dinero, porque el reparto es mitad y mitad y el
-ingreso es común, así que da igual de qué hielera salió cada botella. El evento guarda `from`, `to`, `qty`
-y la hora justamente para que el día que el reparto deje de ser 50/50 el dato ya esté escrito hacia atrás
-y no haya que reconstruirlo.
+Hay un solo vendedor. El historial con Primo (ventas, cargas, turnos, traspasos y cortes cerrados) se
+conserva y se lee igual; simplemente ya no se escribe nada nuevo a su nombre.
+
+**Límites conocidos del litro.** El texto del día que manda *Compartir resumen* todavía cuenta los litros
+dentro de "Calle" y no los separa de las botellas, y el ritmo por hora, las barras por lugar y por hora
+suman botellas y litros juntos. El corte y la hielera sí los separan.
