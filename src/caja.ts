@@ -6,7 +6,7 @@ import { LARGO_MAXIMO_TEXTO, fechaLegible } from './dominio';
  * La caja por dentro. El corte responde "cuanto ganamos"; este modulo responde "donde esta
  * el dinero y a quien le pertenece". Son dos libros distintos a proposito:
  *
- *   - Resultado  (corte.ts): ingreso - gastos = utilidad, mitad y mitad. Un gasto se cuenta
+ *   - Resultado  (corte.ts): ingreso - gastos = utilidad, todo de Fran. Un gasto se cuenta
  *     el dia que se paga, sin importar de que sobre salio el efectivo.
  *   - Tesoreria  (aqui):     de los pesos que hay en la caja, cuales ya tienen dueño.
  *
@@ -309,6 +309,16 @@ export function estadoCaja(movimientos: readonly MovimientoCaja[]): EstadoCaja {
   };
 }
 
+/**
+ * Los sobres que se pintan: todos salvo el de Primo cuando ya no tiene nada. Con saldo pendiente
+ * (a favor o en contra) se queda a la vista hasta que se cobre o se salde.
+ */
+export function sobresVisibles(estado: EstadoCaja): readonly Sobre[] {
+  return SOBRES.filter(
+    (s) => s !== 'primo' || (estado.sobres.find((x) => x.sobre === 'primo')?.hay ?? 0) !== 0
+  );
+}
+
 /** Los sobres que traen deuda, del que mas debe al que menos. Vacio = la caja esta completa. */
 export function sobresEnDeuda(estado: EstadoCaja): SaldoSobre[] {
   return estado.sobres.filter((s) => s.deuda > 0).sort((a, b) => b.deuda - a.deuda);
@@ -327,7 +337,7 @@ export type PlanCaja = {
   totalApartado: number;
   /** Lo que queda para los socios despues de apartar. Negativo en un dia malo. */
   repartible: number;
-  /** La mitad de cada quien. El centavo impar se lo queda Fran, que trae la caja. */
+  /** Todo lo repartible es de Fran. `primo` queda en 0: se conserva por los cortes viejos. */
   fran: number;
   primo: number;
   /** Lo que se le debe a la caja. Informativo: no se cobra aqui, ver abajo. */
@@ -380,22 +390,20 @@ export function planCaja(entrada: {
   const totalApartado = apartados.reduce((t, a) => t + a.centavos, 0);
 
   const repartible = entrada.utilidad - totalApartado;
-  const primo = Math.trunc(repartible / 2);
-  const fran = repartible - primo;
 
   return {
     apartados,
     totalApartado,
     repartible,
-    fran,
-    primo,
+    fran: repartible,
+    primo: 0,
     deuda: entrada.deuda,
-    seQuedaEnCaja: totalApartado + primo,
+    seQuedaEnCaja: totalApartado,
   };
 }
 
 /**
- * Los movimientos que genera cerrar un corte: el apartado del dia y la mitad de cada socio.
+ * Los movimientos que genera cerrar un corte: el apartado del dia y lo de Fran.
  *
  * Los ids se derivan de la fecha del corte, no del reloj: cerrar dos veces la misma fecha
  * —que la app ya no permite, pero aqui no se confia en eso— no puede apartar el doble.
@@ -423,18 +431,16 @@ export function movimientosDeCierre(entrada: {
     });
   }
 
-  // Un repartible negativo le baja el acumulado a los dos: el mal dia tambien es de los dos.
-  // Ese es justo el registro que faltaba cuando Fran no tenia sobre.
-  for (const sobre of SOBRES_SOCIOS) {
-    const centavos = sobre === 'fran' ? entrada.plan.fran : entrada.plan.primo;
-    if (centavos === 0) continue;
+  // Un repartible negativo le baja el acumulado a Fran: el mal dia tambien es suyo. Primo ya no
+  // recibe movimientos de cierre; su sobre solo existe para saldos de cortes anteriores.
+  if (entrada.plan.fran !== 0) {
     movimientos.push({
       ...base,
-      id: `caja-${entrada.fecha}-${sobre}`,
+      id: `caja-${entrada.fecha}-fran`,
       tipo: 'apartado',
-      sobre,
-      centavos,
-      concepto: `Mitad del ${fechaLegible(entrada.fecha)}`,
+      sobre: 'fran',
+      centavos: entrada.plan.fran,
+      concepto: `Del ${fechaLegible(entrada.fecha)}`,
     });
   }
 

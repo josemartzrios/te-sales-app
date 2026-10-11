@@ -254,8 +254,8 @@ function sumar(lineas: readonly { centavos: number }[]): number {
  * dos veces —el error que ya se habia corregido con el fondo y el cambio, escondido en otra
  * linea—. La tesoreria de la caja vive completa en caja.ts y no toca este numero.
  *
- * El reparto es mitad y mitad. El centavo impar se lo queda Fran, que es quien trae la caja:
- * en una utilidad positiva le toca de mas y en una negativa absorbe de mas, siempre igual.
+ * Fran es el unico vendedor: todo lo repartible es suyo y `primo` queda en 0. El campo se
+ * conserva porque los cortes cerrados antes de este cambio guardan su mitad y se leen igual.
  */
 export function calcularReparto(
   ingreso: number,
@@ -267,7 +267,6 @@ export function calcularReparto(
   const totalAjustes = sumar(ajustes);
   const utilidad = ingreso - totalGastos + totalAjustes;
   const repartible = utilidad - apartado;
-  const primo = Math.trunc(repartible / 2);
 
   return {
     ingreso,
@@ -277,8 +276,8 @@ export function calcularReparto(
     utilidad,
     apartado,
     repartible,
-    fran: repartible - primo,
-    primo,
+    fran: repartible,
+    primo: 0,
   };
 }
 
@@ -601,8 +600,13 @@ export function resumenCorte(corte: CorteCerrado): string {
     lineas.push(`Se apartó: ${importe(reparto.apartado)}`);
     lineas.push(`Se reparte: ${importe(reparto.repartible)}`);
   }
-  lineas.push(`Fran: ${importe(reparto.fran)}`);
-  lineas.push(`Primo: ${importe(reparto.primo)}`);
+  // Los cortes viejos traen su mitad de Primo y se siguen leyendo igual; los nuevos no.
+  if (reparto.primo !== 0) {
+    lineas.push(`Fran: ${importe(reparto.fran)}`);
+    lineas.push(`Primo: ${importe(reparto.primo)}`);
+  } else {
+    lineas.push(`Tu utilidad: ${importe(reparto.fran)}`);
+  }
   lineas.push('');
 
   if (corte.caja === null) {
