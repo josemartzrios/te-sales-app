@@ -531,7 +531,7 @@ export type PropsCorregirLugar = {
 };
 
 function textoDelPlan(plan: PlanCorreccion, punto: string): string {
-  const quienes = `${plan.vendedores.join(' y ')} ${plan.vendedores.length > 1 ? 'pasan' : 'pasa'} a ${punto}`;
+  const quienes = `Pasas a ${punto}`;
   if (plan.piezas === 0) return `${quienes}. No hay ventas que reacreditar.`;
   const ventas = plan.ventasMovidas === 1 ? '1 venta' : `${plan.ventasMovidas} ventas`;
   return `${quienes} · se reacreditan ${ventas} (${plan.piezas} piezas).`;
@@ -539,10 +539,10 @@ function textoDelPlan(plan: PlanCorreccion, punto: string): string {
 
 /**
  * "Ya estabamos en otro lugar desde las HH:MM". Antes de escribir nada dice en voz alta cuantas
- * piezas va a mover: la correccion toca el historico de los dos y no se confirma a ciegas.
+ * piezas va a mover: la correccion toca el historico y no se confirma a ciegas.
  */
 export function abrirCorreccionLugar(p: PropsCorregirLugar): void {
-  const modal = el('dialog', { attrs: { 'aria-label': 'Estaban en otro lugar' } });
+  const modal = el('dialog', { attrs: { 'aria-label': 'Estabas en otro lugar' } });
   if (typeof modal.showModal !== 'function') {
     toast('Este navegador no soporta la correccion de lugar');
     return;
@@ -586,13 +586,13 @@ export function abrirCorreccionLugar(p: PropsCorregirLugar): void {
 
   modal.appendChild(
     el('div', {}, [
-      el('h2', { texto: 'Estaban en otro lugar' }),
+      el('h2', { texto: 'Estabas en otro lugar' }),
       el('p', {
         clase: 'detalle',
         texto:
           p.actual === null
-            ? 'Marca el lugar desde la hora en que llegaron.'
-            : `El registro dice ${p.actual}. Marca dónde estaban de verdad y desde qué hora: las ventas de ahí en adelante se reacreditan solas.`,
+            ? 'Marca el lugar desde la hora en que llegaste.'
+            : `El registro dice ${p.actual}. Marca dónde estabas de verdad y desde qué hora: las ventas de ahí en adelante se reacreditan solas.`,
       }),
       el('div', { clase: 'lugares' }, lugares),
       campo('Desde las', hora),
@@ -1089,7 +1089,7 @@ export function vistaHoy(p: PropsHoy): HTMLElement {
         boton('Carga retroactiva', 'btn', p.alAbrirCargaRetro),
       ]),
       el('div', { clase: 'fila-botones' }, [
-        boton('Estaban en otro lugar', 'btn', p.alCorregirLugar),
+        boton('Estabas en otro lugar', 'btn', p.alCorregirLugar),
       ]),
     ]),
     bloqueCuadre(p.eventos, p.fecha),

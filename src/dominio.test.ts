@@ -1301,13 +1301,14 @@ describe('planCorreccionLugar', () => {
     expect(plan).not.toBeNull();
     if (plan === null) return;
 
-    expect(plan.vendedores).toEqual(['Fran', 'Primo']);
+    expect(plan.vendedores).toEqual(['Fran']);
     expect(plan.ventasMovidas).toBe(1);
     expect(plan.piezas).toBe(1);
 
     const despues = [...eventos, ...plan.eventos];
     expect(turnoActual(despues, 'Fran', HOY)?.point).toBe('Plazuela');
-    expect(turnoActual(despues, 'Primo', HOY)?.point).toBe('Plazuela');
+    // El turno viejo de Primo se queda como estaba: solo se corrige a quien vende hoy.
+    expect(turnoActual(despues, 'Primo', HOY)?.point).toBe('Parque Sinaloa');
     // La de las 16:30 se queda donde de verdad ocurrio; solo se muda la de despues.
     expect(porPunto(ventasActivas(despues), []).map((b) => [b.etiqueta, b.valor])).toEqual([
       ['Parque Sinaloa', 1],
@@ -1331,15 +1332,17 @@ describe('planCorreccionLugar', () => {
     ]);
   });
 
-  it('corrige las ventas de los dos vendedores, cada quien las suyas', () => {
+  it('en un dia viejo con Primo solo corrige lo de Fran; lo de Primo no se toca', () => {
     const eventos: AppEvent[] = [
       ...enParqueSinaloa(),
       venta({ id: 'a', ts: `${HOY}T17:30:00`, point: 'Parque Sinaloa', vendor: 'Fran', qty: 2 }),
       venta({ id: 'b', ts: `${HOY}T17:40:00`, point: 'Parque Sinaloa', vendor: 'Primo', qty: 3 }),
     ];
     const plan = corregir(eventos, '17:20', 'Plazuela');
-    expect(plan?.ventasMovidas).toBe(2);
-    expect(plan?.piezas).toBe(5);
+    expect(plan?.ventasMovidas).toBe(1);
+    expect(plan?.piezas).toBe(2);
+    const despues = [...eventos, ...(plan?.eventos ?? [])];
+    expect(ventasActivas(despues).find((v) => v.vendor === 'Primo')?.point).toBe('Parque Sinaloa');
   });
 
   it('no toca lo que quedo despues del siguiente lugar marcado: ahi el registro ya era cierto', () => {
@@ -1368,10 +1371,11 @@ describe('planCorreccionLugar', () => {
     const plan = corregir(eventos, '16:00', 'Plazuela');
     const despues = [...eventos, ...(plan?.eventos ?? [])];
     // Ni un rato de cero minutos en Parque Sinaloa: nadie estuvo parado ahi.
-    expect(jornada(despues, HOY, AHORA).turnos.map((t) => t.punto)).toEqual([
-      'Plazuela',
-      'Plazuela',
-    ]);
+    expect(
+      jornada(despues, HOY, AHORA)
+        .turnos.filter((t) => t.vendedor === 'Fran')
+        .map((t) => t.punto)
+    ).toEqual(['Plazuela']);
     expect(plan?.piezas).toBe(1);
   });
 
@@ -1386,7 +1390,7 @@ describe('planCorreccionLugar', () => {
     expect(plan?.ventasMovidas).toBe(0);
   });
 
-  it('null cuando los dos ya estaban ahi: no hay nada que corregir', () => {
+  it('null cuando ya estaba ahi: no hay nada que corregir', () => {
     const eventos: AppEvent[] = [
       turno({ id: 't1', ts: `${HOY}T16:00:00`, point: 'Plazuela', vendor: 'Fran' }),
       turno({ id: 't2', ts: `${HOY}T16:00:00`, point: 'Plazuela', vendor: 'Primo' }),
@@ -1394,11 +1398,28 @@ describe('planCorreccionLugar', () => {
     expect(corregir(eventos, '17:20', 'Plazuela')).toBeNull();
   });
 
+  it('un dia nuevo solo de Fran: escribe el turno de Fran y ninguno de Primo', () => {
+    const eventos: AppEvent[] = [
+      turno({ id: 't1', ts: `${HOY}T16:00:00`, point: 'Parque Sinaloa', vendor: 'Fran' }),
+      venta({ id: 'a', ts: `${HOY}T17:30:00`, point: 'Parque Sinaloa', qty: 2 }),
+    ];
+    const plan = corregir(eventos, '17:20', 'Plazuela');
+    expect(plan?.vendedores).toEqual(['Fran']);
+    const turnosNuevos = (plan?.eventos ?? []).filter((e) => e.type === 'shift');
+    expect(turnosNuevos.map((t) => (t as ShiftEvent).vendor)).toEqual(['Fran']);
+    expect(plan?.eventos.some((e) => 'vendor' in e && e.vendor === 'Primo')).toBe(false);
+    // Lo de Fran se corrige igual que siempre.
+    expect(plan?.ventasMovidas).toBe(1);
+    expect(plan?.piezas).toBe(2);
+    const despues = [...eventos, ...(plan?.eventos ?? [])];
+    expect(turnoActual(despues, 'Fran', HOY)?.point).toBe('Plazuela');
+  });
+
   it('sin lugar marcado marca el lugar y no inventa ventas que mover', () => {
     const plan = corregir([], '17:20', 'Plazuela');
-    expect(plan?.vendedores).toEqual(['Fran', 'Primo']);
+    expect(plan?.vendedores).toEqual(['Fran']);
     expect(plan?.ventasMovidas).toBe(0);
-    expect(plan?.eventos).toHaveLength(2);
+    expect(plan?.eventos).toHaveLength(1);
   });
 });
 

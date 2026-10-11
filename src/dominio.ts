@@ -448,12 +448,13 @@ export type CorreccionLugar = {
  * marcar sigue vendiendo, y cada toque se le acredita al lugar de antes. Mover solo las ventas
  * dejaria el turno mintiendo; mover solo el turno dejaria las piezas donde no fueron.
  *
- * El lugar se le marca a los dos por la misma razon que al marcarlo en vivo: salen juntos y el
- * registro es de un solo telefono. Las ventas, en cambio, se corrigen vendedor por vendedor y
- * solo las del punto que cada quien traia mal, dentro de la ventana que va de `desde` hasta el
- * siguiente lugar que ese vendedor marco: mas alla el registro ya decia la verdad.
+ * Solo se corrige a quien vende hoy (`VENDEDORES_ACTIVOS`), igual que al marcar el lugar en
+ * vivo: escribirle un turno a Primo en un dia nuevo lo haria aparecer en Hoy sin haber vendido.
+ * Los turnos y ventas de Primo ya guardados en dias viejos no se tocan y se siguen leyendo igual.
+ * Las ventas se corrigen solo las del punto que se traia mal, dentro de la ventana que va de
+ * `desde` hasta el siguiente lugar que ese vendedor marco: mas alla el registro ya decia la verdad.
  *
- * null cuando no hay nada que corregir: los dos ya estaban ahi.
+ * null cuando no hay nada que corregir: ya estaba ahi.
  */
 export function planCorreccionLugar(
   eventos: readonly AppEvent[],
@@ -469,7 +470,7 @@ export function planCorreccionLugar(
   const vendedores: Vendedor[] = [];
   let piezas = 0;
 
-  for (const vendedor of VENDEDORES) {
+  for (const vendedor of VENDEDORES_ACTIVOS) {
     const equivocado = turnoEn(eventos, vendedor, entrada.desde);
     if (equivocado !== null && equivocado.point === entrada.punto) continue;
 

@@ -395,7 +395,7 @@ function corregirLugar(fecha: string, punto: string, hora: string): void {
   if (!aplicarEventos([...eventos, ...plan.eventos])) return;
   toast(
     plan.piezas === 0
-      ? `${plan.vendedores.join(' y ')} en ${punto} desde ${hora}`
+      ? `En ${punto} desde las ${hora}`
       : `${plan.piezas} piezas pasan a ${punto}`,
     2500
   );
