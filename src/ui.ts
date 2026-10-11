@@ -2,13 +2,14 @@ import type {
   AppEvent,
   Canal,
   LoadEvent,
+  Producto,
   SaleEvent,
   Settings,
   ShiftEvent,
   TransferEvent,
   Vendedor,
 } from './tipos';
-import type { Barra, Hielera, LineaConteo, Matriz, PanelVendedor, Rango, Turno } from './dominio';
+import type { Barra, Hielera, Matriz, PanelVendedor, Rango, Turno } from './dominio';
 import type {
   Apartado,
   Borrador,
@@ -40,7 +41,9 @@ import {
 import {
   HIELERA_BAJA,
   HIELERA_CRITICA,
+  PRODUCTOS,
   VENDEDORES,
+  VENDEDOR_ACTIVO,
   cargasDeFecha,
   claveFecha,
   duracionLegible,
@@ -59,7 +62,6 @@ import {
   porLugarYHora,
   porPunto,
   porVendedor,
-  sugerenciaEquilibrio,
   totalDelDia,
   totalPiezas,
   traspasosDeFecha,
@@ -69,35 +71,12 @@ import {
   ventasActivas,
   ventasDeFecha,
 } from './dominio';
+import { boton, campo, el, entrada, selector } from './dom';
+import type { PropsConteo } from './vender';
+import { NOMBRE_PRODUCTO, bloqueConteo } from './vender';
 
-// Toda la escritura de texto pasa por textContent: nunca innerHTML con datos del usuario.
-
-type Opciones = {
-  clase?: string;
-  texto?: string;
-  attrs?: Record<string, string>;
-  onClick?: () => void;
-};
-
-export function el<K extends keyof HTMLElementTagNameMap>(
-  etiqueta: K,
-  opciones: Opciones = {},
-  hijos: readonly (Node | null)[] = []
-): HTMLElementTagNameMap[K] {
-  const nodo = document.createElement(etiqueta);
-  if (opciones.clase !== undefined) nodo.className = opciones.clase;
-  if (opciones.texto !== undefined) nodo.textContent = opciones.texto;
-  if (opciones.attrs !== undefined) {
-    for (const [nombre, valor] of Object.entries(opciones.attrs)) nodo.setAttribute(nombre, valor);
-  }
-  if (opciones.onClick !== undefined) nodo.addEventListener('click', opciones.onClick);
-  for (const hijo of hijos) if (hijo !== null) nodo.appendChild(hijo);
-  return nodo;
-}
-
-function boton(texto: string, clase: string, onClick: () => void): HTMLButtonElement {
-  return el('button', { clase, texto, attrs: { type: 'button' }, onClick });
-}
+// Toda la escritura de texto pasa por textContent (ver dom.ts): nunca innerHTML con datos del
+// usuario.
 
 export function limpiar(nodo: HTMLElement): void {
   nodo.replaceChildren();
@@ -174,32 +153,6 @@ function bloqueBarras(titulo: string, barras: readonly Barra[], anidado = false)
     el(anidado ? 'h3' : 'h2', { texto: titulo }),
     ...filas,
   ]);
-}
-
-/** La hora de ahora en punto, HH:MM. Es el arranque bueno casi siempre; se teclea encima si no. */
-function horaEnPunto(ahora: Date): string {
-  return `${String(ahora.getHours()).padStart(2, '0')}:00`;
-}
-
-function campo(etiqueta: string, control: HTMLElement): HTMLElement {
-  return el('label', {}, [el('span', { clase: 'detalle', texto: etiqueta }), control]);
-}
-
-function selector(valores: readonly string[], valorInicial: string): HTMLSelectElement {
-  const s = el('select');
-  for (const v of valores) {
-    const opcion = el('option', { texto: v });
-    opcion.value = v;
-    s.appendChild(opcion);
-  }
-  s.value = valorInicial;
-  return s;
-}
-
-function entrada(tipo: string, valor: string, attrs: Record<string, string> = {}): HTMLInputElement {
-  const i = el('input', { attrs: { type: tipo, ...attrs } });
-  i.value = valor;
-  return i;
 }
 
 // ---------- navegacion ----------
@@ -291,27 +244,20 @@ function botonMenu(alIr: (v: Vista) => void): HTMLButtonElement {
 export type PropsVender = {
   eventos: readonly AppEvent[];
   ajustes: Settings;
-  vendedor: Vendedor;
   hoy: string;
   ahora: Date;
-  alCambiarVendedor: (v: Vendedor) => void;
   alVender: (punto: string, qty: number) => void;
   alRestar: (punto: string) => void;
   alMarcarLugar: (punto: string) => void;
   alCorregirLugar: () => void;
   alAbrirMayoreo: () => void;
-  alAbrirCarga: (v: Vendedor) => void;
-  alAbrirTraspaso: () => void;
+  alAbrirCarga: () => void;
   alIrA: (v: Vista) => void;
   /**
-   * La captura principal: lugar, hora de llegada y lo que QUEDA en cada hielera al cerrar el
-   * rato. null en un vendedor = no lo contaron, y a ese no se le registra nada.
+   * La captura principal: lugar, hora de llegada y lo que QUEDA en la hielera de cada producto
+   * al cerrar el rato. null en un producto = no lo conto, y a ese no se le registra nada.
    */
-  alRegistrarHora: (datos: {
-    punto: string;
-    hora: string;
-    quedan: Record<Vendedor, number | null>;
-  }) => void;
+  alRegistrarHora: PropsConteo['alRegistrar'];
 };
 
 const ID_HIELERA = 'barra-hielera';
@@ -328,9 +274,9 @@ export function destacarHielera(): void {
   nodo.classList.add('pulso');
 }
 
-/** Quien vende y que le queda, en una linea. Nada mas: el resto de la pantalla es para vender. */
+/** Lo que queda en la hielera y lo vendido hoy, en una linea. El resto es para vender. */
 function barraEstado(p: PropsVender): HTMLElement {
-  const h = hieleraDe(p.eventos, p.vendedor, p.hoy);
+  const h = hieleraDe(p.eventos, VENDEDOR_ACTIVO, p.hoy);
   const vendidoHoy = totalPiezas(
     ventasActivas(p.eventos).filter((v) => claveFecha(v.ts) === p.hoy)
   );
@@ -338,16 +284,6 @@ function barraEstado(p: PropsVender): HTMLElement {
   // Sin cargas ni ventas todavia el restante no significa nada: mejor un guion que un 0 rojo.
   const enBlanco = h.sinCarga && h.vendido === 0;
   const critico = !enBlanco && h.restante <= HIELERA_CRITICA;
-
-  const control = el(
-    'div',
-    { clase: 'segmentado', attrs: { role: 'group', 'aria-label': 'Vendedor activo' } },
-    VENDEDORES.map((v) => {
-      const b = boton(v, `seg${v === p.vendedor ? ' activo' : ''}`, () => p.alCambiarVendedor(v));
-      b.setAttribute('aria-pressed', String(v === p.vendedor));
-      return b;
-    })
-  );
 
   const cifraHielera = el('span', {
     clase: `barra-cifra num${critico ? ' critico' : ''}`,
@@ -358,7 +294,6 @@ function barraEstado(p: PropsVender): HTMLElement {
   // Vender no tiene encabezado propio: esta barra pegada arriba hace de encabezado, asi que el
   // "⋯" va aqui, en el mismo extremo derecho que en las otras tres pantallas.
   return el('div', { clase: 'barra-estado' }, [
-    control,
     el('div', { clase: 'barra-datos' }, [
       el('span', { clase: 'barra-dato' }, [
         el('span', { clase: 'detalle', texto: 'Hielera ' }),
@@ -382,7 +317,7 @@ function tarjetaSinLugar(p: PropsVender): HTMLElement {
     el('h2', { texto: '¿Dónde están?' }),
     el('p', {
       clase: 'detalle',
-      texto: 'Marca el lugar una vez: abre el turno de los dos y ahí se acredita todo.',
+      texto: 'Marca el lugar una vez: abre el turno y ahí se acredita todo.',
     }),
     el(
       'div',
@@ -415,15 +350,13 @@ function tarjetaTurno(p: PropsVender, turno: Turno): HTMLElement {
 function bloqueVenta(p: PropsVender, punto: string): HTMLElement {
   const mayoreo = totalDelDia(p.eventos, p.hoy, punto, 'mayoreo');
 
-  const botonPrincipal = boton(`+1 · ${p.vendedor}`, 'btn-venta', () => p.alVender(punto, 1));
-  botonPrincipal.setAttribute('aria-label', `Registrar una venta de ${p.vendedor} en ${punto}`);
+  const botonPrincipal = boton('+1', 'btn-venta', () => p.alVender(punto, 1));
+  botonPrincipal.setAttribute('aria-label', `Registrar una venta en ${punto}`);
 
-  // Por vendedor, no por punto: los dos venden desde este telefono y en este mismo lugar, asi
-  // que un -1 sin filtrar le borraria la pieza al otro sin avisar.
-  const hayQueAnular = ultimaVentaActiva(p.eventos, punto, p.hoy, p.vendedor) !== null;
+  const hayQueAnular = ultimaVentaActiva(p.eventos, punto, p.hoy, VENDEDOR_ACTIVO) !== null;
   const botonRestar = boton('−1', 'btn-chico peligro', () => p.alRestar(punto));
   botonRestar.disabled = !hayQueAnular;
-  botonRestar.setAttribute('aria-label', `Anular la última venta de ${p.vendedor} en ${punto}`);
+  botonRestar.setAttribute('aria-label', `Anular la última venta en ${punto}`);
 
   return el('section', { clase: 'punto' }, [
     botonPrincipal,
@@ -450,62 +383,8 @@ function resumenDeHoy(p: PropsVender): HTMLElement | null {
   return bloqueBarras('Calle hoy por lugar', porPunto(calle, p.ajustes.points), true);
 }
 
-/**
- * Lo que el vendedor deberia traer, para ponerlo al lado del campo donde teclea lo que conto.
- * Sin carga registrada el numero no significa nada todavia y decirlo evita teclear contra un 0.
- */
-function pieDeConteo(h: Hielera): string {
-  if (h.sinCarga && h.vendido === 0) return 'sin carga';
-  if (h.restante < 0) return `debe ${-h.restante} de mas`;
-  return `trae ${h.restante}`;
-}
-
-/**
- * La captura principal: donde estuvimos, a que hora llegamos y cuantas quedan en cada hielera.
- * Va arriba de todo porque es como se trabaja; tocar +1 por botella tiene friccion en la calle.
- *
- * Se cuenta al CERRAR el rato, pero la hora que se teclea es la de llegada: las piezas se
- * acreditan al lugar y a la franja en que de verdad se fueron, que es como se lee la cuadricula.
- * La hora arranca en la de ahora redondeada hacia abajo y se teclea encima si se llego antes.
- *
- * El campo vacio no es cero: es "a este no lo conte". Por eso el placeholder es un guion y no un
- * 0 — un 0 invitaria a dejarlo asi, y un 0 contado significa que se vendio la hielera entera.
- */
-function bloqueHora(p: PropsVender): HTMLElement {
-  const lugar = selector(p.ajustes.points, turnoActual(p.eventos, p.vendedor, p.hoy)?.point ?? p.ajustes.points[0] ?? '');
-  const hora = entrada('time', horaEnPunto(p.ahora));
-  const conteo = VENDEDORES.map((v) => ({
-    vendedor: v,
-    pie: pieDeConteo(hieleraDe(p.eventos, v, p.hoy)),
-    control: entrada('number', '', { min: '0', step: '1', inputmode: 'numeric', placeholder: '—' }),
-  }));
-
-  const registrar = (): void => {
-    p.alRegistrarHora({
-      punto: lugar.value,
-      hora: hora.value,
-      quedan: Object.fromEntries(
-        conteo.map((c) => [c.vendedor, c.control.value === '' ? null : Number(c.control.value)])
-      ) as Record<Vendedor, number | null>,
-    });
-    for (const c of conteo) c.control.value = '';
-  };
-
-  return el('section', { clase: 'bloque' }, [
-    el('h2', { texto: '¿Dónde y a qué hora?' }),
-    el('div', { clase: 'corte-precios' }, [campo('Lugar', lugar), campo('Llegamos', hora)]),
-    el('p', { clase: 'detalle espaciado', texto: 'Cuenta lo que queda en la hielera' }),
-    el(
-      'div',
-      { clase: 'corte-precios' },
-      conteo.map((c) => campo(`${c.vendedor} · ${c.pie}`, c.control))
-    ),
-    boton('Registrar', 'btn-venta espaciado', registrar),
-  ]);
-}
-
 export function vistaVender(p: PropsVender): HTMLElement {
-  const marcado = turnoActual(p.eventos, p.vendedor, p.hoy);
+  const marcado = turnoActual(p.eventos, VENDEDOR_ACTIVO, p.hoy);
   const turno =
     marcado === null
       ? null
@@ -514,18 +393,22 @@ export function vistaVender(p: PropsVender): HTMLElement {
   return el('div', { clase: 'pantalla-vender' }, [
     el('h1', { clase: 'solo-lectores', texto: 'Vender' }),
     barraEstado(p),
-    bloqueHora(p),
+    bloqueConteo({
+      eventos: p.eventos,
+      hoy: p.hoy,
+      ahora: p.ahora,
+      puntos: p.ajustes.points,
+      lugarInicial: marcado?.point ?? p.ajustes.points[0] ?? '',
+      alRegistrar: p.alRegistrarHora,
+      alAbrirCarga: p.alAbrirCarga,
+      alAbrirMayoreo: p.alAbrirMayoreo,
+    }),
     resumenDeHoy(p),
     el('div', { clase: 'separador' }),
     // El conteo en vivo sigue disponible para el rato que se quiera contar botella por botella.
     el('p', { clase: 'detalle', texto: '¿Contar en vivo?' }),
     turno === null ? tarjetaSinLugar(p) : tarjetaTurno(p, turno),
     turno === null ? null : bloqueVenta(p, turno.punto),
-    el('div', { clase: 'acciones-secundarias' }, [
-      boton('Cargar hielera', 'btn-texto', () => p.alAbrirCarga(p.vendedor)),
-      boton('Pasar botellas', 'btn-texto', p.alAbrirTraspaso),
-      boton('Mayoreo', 'btn-texto', p.alAbrirMayoreo),
-    ]),
   ]);
 }
 
@@ -587,7 +470,7 @@ function abrirLugar(
 ): void {
   abrirSelectorLugar({
     titulo: 'Cambiar de lugar',
-    texto: 'Desde este momento las ventas de los dos se acreditan al lugar nuevo.',
+    texto: 'Desde este momento las ventas se acreditan al lugar nuevo.',
     puntos,
     actual,
     alConfirmar,
@@ -728,92 +611,49 @@ export function abrirCorreccionLugar(p: PropsCorregirLugar): void {
   modal.showModal();
 }
 
-function textoSobrante(l: LineaConteo): string {
-  const traia = l.sinCarga ? 'no tiene carga registrada hoy' : `debería traer ${l.esperado}`;
-  return `${l.vendedor} cuenta ${l.contado ?? 0} y ${traia}: sobran ${l.sobran}.`;
-}
-
-/**
- * Contar mas botellas de las que el sistema cree que quedan solo tiene una explicacion fisica:
- * una carga que no se registro. La captura se detiene aqui en vez de escribir una venta negativa
- * o tragarse el descuadre, y ofrece de un toque lo unico que lo arregla.
- *
- * No registra el conteo del otro vendedor tampoco: los dos numeros se teclearon juntos y se
- * vuelven a teclear juntos: partirlos dejaria a medias una captura que el vendedor cree hecha.
- */
-export function abrirSobranteConteo(
-  sobrantes: readonly LineaConteo[],
-  alCargar: (vendedor: Vendedor) => void
-): void {
-  const primero = sobrantes[0];
-  if (primero === undefined) return;
-  const modal = el('dialog', { attrs: { 'aria-label': 'Sobran botellas' } });
-
-  if (typeof modal.showModal !== 'function') {
-    const texto = `${sobrantes.map(textoSobrante).join('\n')}\n\n¿Registrar la carga que falta?`;
-    if (window.confirm(texto)) alCargar(primero.vendedor);
-    return;
-  }
-
-  const cerrar = (): void => {
-    modal.close();
-    modal.remove();
-  };
-
-  modal.appendChild(
-    el('div', {}, [
-      el('h2', { texto: 'Sobran botellas' }),
-      el('div', {}, sobrantes.map((l) => el('p', { texto: textoSobrante(l) }))),
-      el('p', {
-        clase: 'detalle',
-        texto: 'De la nada no salen: falta registrar una carga. Regístrala y vuelve a contar.',
-      }),
-      el('div', { clase: 'fila-botones' }, [
-        boton('Cancelar', 'btn', cerrar),
-        boton('Cargar hielera', 'btn activo', () => {
-          cerrar();
-          alCargar(primero.vendedor);
-        }),
-      ]),
-    ])
-  );
-
-  document.body.appendChild(modal);
-  modal.addEventListener('cancel', () => modal.remove());
-  modal.showModal();
-}
-
 /** Tamanos tipicos de lote: casi siempre la carga es una de estas dos. */
 const LOTES: readonly number[] = [18, 19];
 
 export function abrirCarga(
-  vendedorActual: Vendedor,
-  cargadoDe: (v: Vendedor) => Hielera,
-  alConfirmar: (vendedor: Vendedor, qty: number) => void
+  productoInicial: Producto,
+  cargadoDe: (producto: Producto) => Hielera,
+  alConfirmar: (producto: Producto, qty: number) => void
 ): void {
   const modal = el('dialog', { attrs: { 'aria-label': 'Cargar hielera' } });
+  const nombre = (x: Producto): string => NOMBRE_PRODUCTO[x].plural;
 
   if (typeof modal.showModal !== 'function') {
-    const respuesta = window.prompt(`Piezas que carga ${vendedorActual} en su hielera:`, '18');
+    const pregunta = `Cuántos ${nombre(productoInicial)} cargas en la hielera:`;
+    const respuesta = window.prompt(pregunta, '18');
     const qty = Number(respuesta);
-    if (Number.isInteger(qty) && qty >= 1) alConfirmar(vendedorActual, qty);
+    if (Number.isInteger(qty) && qty >= 1) alConfirmar(productoInicial, qty);
     return;
   }
 
-  const vendedor = selector(VENDEDORES, vendedorActual);
+  let producto = productoInicial;
   const cantidad = entrada('number', String(LOTES[0] ?? 18), {
     min: '1',
     step: '1',
     inputmode: 'numeric',
   });
   const estado = el('p', { clase: 'detalle' });
+  const productos = PRODUCTOS.map((x) =>
+    boton(NOMBRE_PRODUCTO[x].titulo, 'seg', () => {
+      producto = x;
+      refrescar();
+    })
+  );
   const refrescar = (): void => {
-    const h = cargadoDe(vendedor.value as Vendedor);
+    productos.forEach((b, i) => {
+      const activo = PRODUCTOS[i] === producto;
+      b.classList.toggle('activo', activo);
+      b.setAttribute('aria-pressed', String(activo));
+    });
+    const h = cargadoDe(producto);
     estado.textContent = h.sinCarga
-      ? `${h.vendedor} no tiene carga registrada hoy.`
-      : `${h.vendedor} lleva ${h.cargado} cargados hoy; esto se suma.`;
+      ? `No hay ${nombre(producto)} cargados hoy.`
+      : `Llevas ${h.cargado} ${nombre(producto)} cargados hoy; esto se suma.`;
   };
-  vendedor.addEventListener('change', refrescar);
   refrescar();
 
   const cerrar = (): void => {
@@ -827,14 +667,18 @@ export function abrirCarga(
       return;
     }
     cerrar();
-    alConfirmar(vendedor.value as Vendedor, qty);
+    alConfirmar(producto, qty);
   };
 
   modal.appendChild(
     el('div', {}, [
       el('h2', { texto: 'Cargar hielera' }),
       el('p', { clase: 'detalle', texto: 'Piezas que salen en la hielera. Las recargas del día suman.' }),
-      campo('Vendedor', vendedor),
+      el(
+        'div',
+        { clase: 'segmentado', attrs: { role: 'group', 'aria-label': 'Producto' } },
+        productos
+      ),
       campo('Piezas', cantidad),
       el(
         'div',
@@ -849,105 +693,6 @@ export function abrirCarga(
       el('div', { clase: 'fila-botones' }, [
         boton('Cancelar', 'btn', cerrar),
         boton('Cargar', 'btn activo', () => confirmar(Number(cantidad.value))),
-      ]),
-    ])
-  );
-
-  document.body.appendChild(modal);
-  modal.addEventListener('cancel', () => modal.remove());
-  modal.showModal();
-}
-
-/**
- * Pasar botellas de una hielera a la otra. El numero llega precargado con lo que dejaria a los
- * dos parejos, que es para lo que se cuentan, pero se puede editar: el que decide cuantas pasan
- * es el que las esta contando, no la app.
- */
-export function abrirTraspaso(
-  vendedorActual: Vendedor,
-  traeAhora: (v: Vendedor) => Hielera,
-  alConfirmar: (from: Vendedor, to: Vendedor, qty: number) => void
-): void {
-  const otro = (v: Vendedor): Vendedor => VENDEDORES.find((x) => x !== v) ?? v;
-  // Por defecto da el que trae mas: es el caso real, el que se esta quedando sin nada recibe.
-  const sugeridoDonante =
-    traeAhora(otro(vendedorActual)).restante > traeAhora(vendedorActual).restante
-      ? otro(vendedorActual)
-      : vendedorActual;
-
-  const modal = el('dialog', { attrs: { 'aria-label': 'Pasar botellas' } });
-
-  if (typeof modal.showModal !== 'function') {
-    const destino = otro(sugeridoDonante);
-    const parejo = sugerenciaEquilibrio(traeAhora(sugeridoDonante), traeAhora(destino));
-    const respuesta = window.prompt(
-      `Piezas que ${sugeridoDonante} le pasa a ${destino}:`,
-      String(parejo)
-    );
-    const qty = Number(respuesta);
-    if (Number.isInteger(qty) && qty >= 1) alConfirmar(sugeridoDonante, destino, qty);
-    return;
-  }
-
-  const donante = selector(VENDEDORES, sugeridoDonante);
-  const cantidad = entrada('number', '0', { min: '1', step: '1', inputmode: 'numeric' });
-  const estado = el('p', { clase: 'detalle' });
-
-  /** Las dos hieleras en juego, siempre en el sentido del selector: quien da y quien recibe. */
-  const lados = (): { da: Hielera; recibe: Hielera } => {
-    const quienDa = donante.value as Vendedor;
-    return { da: traeAhora(quienDa), recibe: traeAhora(otro(quienDa)) };
-  };
-
-  const botonMitad = boton('Mitad y mitad', 'btn-chico acento', () => {
-    const { da, recibe } = lados();
-    cantidad.value = String(sugerenciaEquilibrio(da, recibe));
-  });
-
-  const refrescar = (): void => {
-    const { da, recibe } = lados();
-    cantidad.value = String(sugerenciaEquilibrio(da, recibe));
-    // Sin carga ni traspaso registrado el restante no significa nada: sugerir la mitad de un
-    // numero que no existe seria inventarla.
-    const aCiegas = da.sinCarga || recibe.sinCarga;
-    botonMitad.disabled = aCiegas;
-    estado.textContent = aCiegas
-      ? 'Falta registrar carga: la app no sabe cuántas trae cada quien.'
-      : `${da.vendedor} trae ${da.restante} · ${recibe.vendedor} trae ${recibe.restante}`;
-  };
-  donante.addEventListener('change', refrescar);
-  refrescar();
-
-  const cerrar = (): void => {
-    modal.close();
-    modal.remove();
-  };
-
-  const confirmar = (): void => {
-    const da = donante.value as Vendedor;
-    const qty = Number(cantidad.value);
-    if (!Number.isInteger(qty) || qty < 1) {
-      toast('Cantidad invalida');
-      return;
-    }
-    cerrar();
-    alConfirmar(da, otro(da), qty);
-  };
-
-  modal.appendChild(
-    el('div', {}, [
-      el('h2', { texto: 'Pasar botellas' }),
-      el('p', {
-        clase: 'detalle',
-        texto: 'Cambian de hielera, no se venden. El total cargado del día no se mueve.',
-      }),
-      campo('Las pasa', donante),
-      campo('Piezas', cantidad),
-      el('div', { clase: 'fila-chica' }, [botonMitad]),
-      estado,
-      el('div', { clase: 'fila-botones' }, [
-        boton('Cancelar', 'btn', cerrar),
-        boton('Pasar', 'btn activo', confirmar),
       ]),
     ])
   );

@@ -520,6 +520,81 @@ label .detalle {
   opacity: 1;
 }
 
+/* ---------- vender: conteo de la hielera ---------- */
+
+/* La pregunta principal manda en la pantalla: se lee de reojo y se teclea con el pulgar. */
+.conteo-principal .conteo-pregunta {
+  margin-bottom: 8px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.conteo-principal input[type='number'] {
+  min-height: 72px;
+  font-size: 40px;
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.conteo-pista {
+  margin: 6px 0 0;
+  text-align: center;
+}
+
+/* Los litros van en una fila mas chica: pregunta a la izquierda, campo a la derecha. */
+.conteo-secundario {
+  display: grid;
+  grid-template-columns: 1fr 96px;
+  align-items: center;
+  column-gap: 12px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--linea);
+}
+
+.conteo-secundario .conteo-pregunta {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.conteo-secundario input[type='number'] {
+  min-height: 52px;
+  font-size: 24px;
+  text-align: center;
+}
+
+.conteo-secundario .conteo-pista {
+  grid-column: 1 / -1;
+  text-align: left;
+}
+
+.conteo-donde {
+  margin-top: 20px;
+}
+
+/* Deshabilitado hasta que haya un conteo: se ve apagado, no como un error. */
+.btn-venta:disabled {
+  background: var(--linea);
+  color: var(--secundario);
+  cursor: default;
+}
+
+.btn-venta:disabled:active {
+  opacity: 1;
+}
+
+/* En el dialogo de carga, el selector de producto ocupa el ancho y no se pega al campo. */
+dialog .segmentado {
+  margin-bottom: 12px;
+}
+
+dialog .segmentado .seg {
+  flex: 1;
+  min-height: 44px;
+}
+
 /* Al fondo y sin peso visual: no compiten con los botones que registran dinero. */
 .acciones-secundarias {
   display: flex;
