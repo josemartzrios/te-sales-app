@@ -78,6 +78,10 @@ export type AppEvent = SaleEvent | VoidEvent | LoadEvent | ShiftEvent | Transfer
 
 export type Settings = {
   points: string[];
+  /**
+   * Ya no lo lee nada (vende uno solo). Se conserva solo para que los ajustes guardados de antes
+   * sigan cargando y validando igual.
+   */
   defaultVendor: Vendedor;
   deviceId: string;
 };

@@ -372,6 +372,7 @@ export function ultimaVentaActiva(
       (v) =>
         v.point === punto &&
         v.channel === 'calle' &&
+        productoDe(v) === 'botella' &&
         v.vendor === vendedor &&
         claveFecha(v.ts) === clave
     )
@@ -1158,6 +1159,7 @@ export function validarAjustes(valor: unknown, deviceId: string): Settings {
 
   return {
     points: puntos.length > 0 ? puntos : [...PUNTOS_INICIALES],
+    // Ya no se lee en ningun lado: se valida solo para que los ajustes viejos sigan cargando.
     defaultVendor: VENDEDORES.includes(defaultVendor as Vendedor)
       ? (defaultVendor as Vendedor)
       : 'Fran',

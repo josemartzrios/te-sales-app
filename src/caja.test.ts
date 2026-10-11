@@ -453,6 +453,20 @@ describe('movimientosDeCierre', () => {
     expect(sobresVisibles(debiendo)).toContain('primo');
   });
 
+  it('sobresVisibles muestra a primo si su saldo se presto entero: hay 0 pero se le debe', () => {
+    const prestado = estadoCaja([
+      mov('apartado', 'primo', 13750),
+      mov('prestamo', 'primo', -13750),
+    ]);
+    expect(prestado.sobres.find((s) => s.sobre === 'primo')?.hay).toBe(0);
+    expect(sobresVisibles(prestado)).toContain('primo');
+  });
+
+  it('sobresVisibles oculta a primo cuando su saldo llego a cero por movimientos', () => {
+    const cobrado = estadoCaja([mov('apartado', 'primo', 13750), mov('pago', 'primo', -13750)]);
+    expect(sobresVisibles(cobrado)).not.toContain('primo');
+  });
+
   it('sin mitad que repartir no escribe lineas de cero', () => {
     const cero = planCaja({ utilidad: 0, deuda: 0, apartado: APARTADO_VACIO });
     const movs = movimientosDeCierre({ ...entrada, plan: cero });
@@ -865,6 +879,13 @@ describe('cajaParaEsperado', () => {
     expect(cajaParaEsperado([apartado, pago], HOY)).toBe(32000);
   });
 
+  it('cobrar lo tuyo hoy si se resta: Fran saco efectivo de la caja antes de contar', () => {
+    const apartado = conFecha(mov('apartado', 'fran', 50000), '2026-08-07');
+    const cobro = conFecha(mov('pago', 'fran', -30000), HOY);
+    // Al abrir habia 320 + 500; hoy cobro 300, asi que contra el bulto quedan 520.
+    expect(cajaParaEsperado([apartado, cobro], HOY)).toBe(32000 + 50000 - 30000);
+  });
+
   it('pagar gasolina hoy NO se resta aparte: ese dia tambien se captura como gasto', () => {
     const apartado = conFecha(mov('apartado', 'gasolina', 13500), '2026-08-07');
     const pago = conFecha(mov('pago', 'gasolina', -13500), HOY);
@@ -887,5 +908,20 @@ describe('resumenCaja', () => {
     const texto = resumenCaja(estadoCaja([]));
     expect(texto).toContain('La caja está al corriente');
     expect(texto).not.toContain('Debemos');
+  });
+});
+
+describe('resumenCaja y el sobre de Primo', () => {
+  it('sin saldo de Primo no imprime su linea', () => {
+    expect(resumenCaja(estadoCaja([]))).not.toContain('Sueldo de Primo');
+    const cobrado = estadoCaja([mov('apartado', 'primo', 13750), mov('pago', 'primo', -13750)]);
+    expect(resumenCaja(cobrado)).not.toContain('Sueldo de Primo');
+  });
+
+  it('con saldo de Primo (o prestado) si la imprime', () => {
+    const conSaldo = estadoCaja([mov('apartado', 'primo', 13750)]);
+    expect(resumenCaja(conSaldo)).toContain('Sueldo de Primo: $137.50');
+    const prestado = estadoCaja([mov('apartado', 'primo', 13750), mov('prestamo', 'primo', -13750)]);
+    expect(resumenCaja(prestado)).toContain('Sueldo de Primo: $0.00 de 137.50');
   });
 });

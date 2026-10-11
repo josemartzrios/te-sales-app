@@ -1,6 +1,6 @@
 import type { AppEvent, Producto } from './tipos';
 import type { Hielera, LineaConteo } from './dominio';
-import { PRODUCTOS, VENDEDOR_ACTIVO, hieleraDe } from './dominio';
+import { PRODUCTOS, VENDEDOR_ACTIVO, hieleraDe, productoDe } from './dominio';
 import { boton, campo, el, entrada, horaEnPunto, selector } from './dom';
 
 // La captura principal de la pantalla Vender: "¿cuantas te quedan?". Aqui vive el bloque de
@@ -11,6 +11,15 @@ export const NOMBRE_PRODUCTO: Record<Producto, { titulo: string; plural: string 
   botella: { titulo: 'Botellas', plural: 'botellas' },
   litro: { titulo: 'Litros', plural: 'litros' },
 };
+
+/**
+ * La insignia de un evento en la lista de movimientos de Hoy. Solo el litro la lleva: ahi se
+ * anula y se mueve, y anular el renglon equivocado cambia dinero ($35 contra $20) y la hielera.
+ * Botella y eventos viejos sin `product` devuelven null y se ven igual que siempre.
+ */
+export function insigniaDeProducto(e: { product?: Producto }): string | null {
+  return productoDe(e) === 'litro' ? 'LITRO' : null;
+}
 
 /**
  * La pregunta de cada producto. El principal siempre se pregunta y va en grande; los demas solo

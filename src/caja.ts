@@ -316,12 +316,13 @@ export function estadoCaja(movimientos: readonly MovimientoCaja[]): EstadoCaja {
 
 /**
  * Los sobres que se pintan: todos salvo el de Primo cuando ya no tiene nada. Con saldo pendiente
- * (a favor o en contra) se queda a la vista hasta que se cobre o se salde.
+ * (a favor o en contra) se queda a la vista hasta que se cobre o se salde, y tambien si su saldo
+ * se presto entero: ahi no hay efectivo pero se le debe, y hay que poder devolverselo.
  */
 export function sobresVisibles(estado: EstadoCaja): readonly Sobre[] {
-  return SOBRES.filter(
-    (s) => s !== 'primo' || (estado.sobres.find((x) => x.sobre === 'primo')?.hay ?? 0) !== 0
-  );
+  const primo = estado.sobres.find((x) => x.sobre === 'primo');
+  const conAlgo = primo !== undefined && (primo.hay !== 0 || primo.objetivo !== 0);
+  return SOBRES.filter((s) => s !== 'primo' || conAlgo);
 }
 
 /** Los sobres que traen deuda, del que mas debe al que menos. Vacio = la caja esta completa. */
@@ -644,8 +645,9 @@ export function movimientoDeArqueo(entrada: {
  * botellas de 218, esos 200 ya bajaron el saldo de la caja Y ademas van dentro del gasto de
  * 218, asi que se restarian dos veces y el bulto pareceria tener 200 de menos.
  *
- * La unica salida que si hay que restar aparte es el sueldo de Primo: su mitad ya salio de la
- * utilidad el dia que se gano (en los cortes de cuando eran dos; los nuevos no le abonan), asi que pagarsela mueve efectivo sin volver a costar. La
+ * Las unicas salidas que si hay que restar aparte son los cobros de los sobres de socios: lo
+ * tuyo cuando lo cobras, y el saldo viejo de Primo. Ese dinero ya salio de la utilidad el dia
+ * que se gano, asi que cobrarlo mueve efectivo sin volver a costar. La
  * gasolina y el gas no entran aqui: cuando se pagan desde el corte llevan detras su linea de
  * gasto, que ya bajo la utilidad.
  *
@@ -656,10 +658,10 @@ export function cajaParaEsperado(
   fecha: string
 ): number {
   const alAbrir = estadoCaja(movimientos.filter((m) => m.fecha < fecha)).hay;
-  const sueldoPagadoHoy = movimientos
-    .filter((m) => m.fecha === fecha && m.tipo === 'pago' && m.sobre === 'primo')
+  const cobradoHoy = movimientos
+    .filter((m) => m.fecha === fecha && m.tipo === 'pago' && SOBRES_SOCIOS.includes(m.sobre))
     .reduce((total, m) => total + m.centavos, 0);
-  return alAbrir + sueldoPagadoHoy;
+  return alAbrir + cobradoHoy;
 }
 
 // ---------- validacion defensiva de lo guardado ----------
@@ -710,7 +712,8 @@ export function validarMovimiento(valor: unknown): MovimientoCaja | null {
 /** Texto plano para pegar en WhatsApp, con el mismo criterio que el resumen del corte. */
 export function resumenCaja(estado: EstadoCaja): string {
   const lineas: string[] = ['Caja', ''];
-  for (const s of estado.sobres) {
+  const visibles = sobresVisibles(estado);
+  for (const s of estado.sobres.filter((x) => visibles.includes(x.sobre))) {
     const falta = s.deuda > 0 ? ` (faltan ${importe(s.deuda)})` : '';
     lineas.push(`${NOMBRE_SOBRE[s.sobre]}: ${importe(s.hay)} de ${pesos(s.objetivo)}${falta}`);
   }

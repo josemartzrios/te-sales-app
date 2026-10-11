@@ -76,7 +76,7 @@ import {
 } from './dominio';
 import { boton, campo, el, entrada, selector } from './dom';
 import type { PropsConteo } from './vender';
-import { NOMBRE_PRODUCTO, bloqueConteo } from './vender';
+import { NOMBRE_PRODUCTO, bloqueConteo, insigniaDeProducto } from './vender';
 
 // Toda la escritura de texto pasa por textContent (ver dom.ts): nunca innerHTML con datos del
 // usuario.
@@ -872,8 +872,16 @@ function bloqueCuadre(eventos: readonly AppEvent[], fecha: string): HTMLElement 
   ]);
 }
 
+/** La insignia LITRO, o nada para botellas y eventos viejos. */
+function insigniaProducto(e: { product?: Producto }): HTMLElement | null {
+  const texto = insigniaDeProducto(e);
+  return texto === null ? null : el('span', { clase: 'insignia', texto });
+}
+
 function insignias(v: SaleEvent): HTMLElement[] {
   const marcas: HTMLElement[] = [];
+  const producto = insigniaProducto(v);
+  if (producto !== null) marcas.push(producto);
   if (v.channel === 'mayoreo') marcas.push(el('span', { clase: 'insignia', texto: 'MAYOREO' }));
   if (v.retro === true) marcas.push(el('span', { clase: 'insignia', texto: 'RETRO' }));
   if (v.movedFrom !== undefined) {
@@ -997,6 +1005,7 @@ function filaMovimiento(m: Movimiento): (HTMLElement | null)[] {
     return [
       hora,
       el('span', { clase: 'insignia', texto: 'CARGA' }),
+      insigniaProducto(m),
       el('span', { clase: 'detalle', texto: m.vendor }),
       el('span', { clase: 'num', texto: `×${m.qty}` }),
     ];
@@ -1557,8 +1566,10 @@ function contenidoUtilidad(
   apartados: readonly { sobre: 'gasolina' | 'gas'; centavos: number }[],
   pie: HTMLElement | null
 ): Node[] {
+  // Con un solo dueño no se parte nada: los cortes viejos con Primo conservan "Se reparte".
+  const unSoloDueno = reparto.primo === 0;
   return [
-    el('h2', { texto: 'Se reparte' }),
+    el('h2', { texto: unSoloDueno ? 'Tu utilidad' : 'Se reparte' }),
     lineaDinero('Ingreso', reparto.ingreso),
     lineaDinero('Gastos del día', -reparto.gastos),
     reparto.reponerCaja === 0 ? null : lineaDinero('Reponer caja', -reparto.reponerCaja),
@@ -1570,7 +1581,7 @@ function contenidoUtilidad(
       : reparto.apartado === 0
         ? []
         : [lineaDinero('Se apartó', -reparto.apartado)]),
-    lineaDinero('Se reparte', reparto.repartible, 'corte-total'),
+    lineaDinero(unSoloDueno ? 'Tu utilidad' : 'Se reparte', reparto.repartible, 'corte-total'),
     tarjetasSocios(reparto.fran, reparto.primo),
     pie,
   ].filter((n): n is HTMLElement => n !== null);

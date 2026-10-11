@@ -661,6 +661,41 @@ describe('resumenCorte', () => {
     );
   });
 
+  it('con apartado y un solo dueño no repite la cifra: se aparto y luego tu utilidad', () => {
+    const corte = cerrarCorte({
+      borrador: borradorCon([MAMA_JUANI, GASOLINA]),
+      ingreso: ingresoDeFecha(loteDe18(), FECHA, PRECIOS_INICIALES),
+      precios: PRECIOS_INICIALES,
+      device: 'dev1',
+      cerradoEn: `${FECHA}T22:10:00-07:00`,
+      apartado: 4500,
+    });
+    const texto = resumenCorte(corte);
+    expect(texto).toContain(['Utilidad: $275.00', 'Se apartó: $45.00', 'Tu utilidad: $230.00'].join('\n'));
+    expect(texto).not.toContain('Se reparte');
+  });
+
+  it('un corte viejo con primo y apartado se imprime exactamente como antes', () => {
+    const base = cerrarCorte({
+      borrador: borradorCon([MAMA_JUANI, GASOLINA]),
+      ingreso: ingresoDeFecha(loteDe18(), FECHA, PRECIOS_INICIALES),
+      precios: PRECIOS_INICIALES,
+      device: 'dev1',
+      cerradoEn: `${FECHA}T22:10:00-07:00`,
+      apartado: 4500,
+    });
+    const viejo = { ...base, reparto: { ...base.reparto, fran: 11500, primo: 11500 } };
+    expect(resumenCorte(viejo)).toContain(
+      [
+        'Utilidad: $275.00',
+        'Se apartó: $45.00',
+        'Se reparte: $230.00',
+        'Fran: $115.00',
+        'Primo: $115.00',
+      ].join('\n')
+    );
+  });
+
   it('resumenCorte de un corte cerrado con primo viejo sigue mostrando la linea Primo', () => {
     const nuevo = cerrarCorte({
       borrador: borradorCon([MAMA_JUANI, GASOLINA]),

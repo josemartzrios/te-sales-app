@@ -210,6 +210,19 @@ describe('anularUltimaVenta', () => {
     expect(ultimaVentaActiva(eventos, 'Plazuela', HOY, 'Primo')?.id).toBe('primo1');
   });
 
+  it('ultimaVentaActiva solo ve botellas: -1 deshace lo que hizo +1, nunca un litro', () => {
+    const eventos: AppEvent[] = [
+      venta({ id: 'bot', ts: '2026-07-30T09:00:00', qty: 4 }),
+      venta({ id: 'lit', ts: '2026-07-30T09:00:00', qty: 2, product: 'litro' }),
+      venta({ id: 'zlit', ts: '2026-07-30T09:00:00', qty: 1, product: 'litro' }),
+    ];
+    expect(ultimaVentaActiva(eventos, 'Plazuela', HOY, 'Fran')?.id).toBe('bot');
+    const soloLitros: AppEvent[] = [
+      venta({ id: 'lit', ts: '2026-07-30T09:00:00', product: 'litro' }),
+    ];
+    expect(ultimaVentaActiva(soloLitros, 'Plazuela', HOY, 'Fran')).toBeNull();
+  });
+
   it('ultimaVentaActiva apunta a la misma venta que anularia el boton', () => {
     const eventos: AppEvent[] = [
       venta({ id: 'a', ts: '2026-07-30T09:00:00' }),

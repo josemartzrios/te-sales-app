@@ -603,7 +603,8 @@ export function resumenCorte(corte: CorteCerrado): string {
   if (reparto.apartado > 0) {
     // Sin decir para que: hoy es la gasolina, y los cortes viejos traen gasolina y gas juntos.
     lineas.push(`Se apartó: ${importe(reparto.apartado)}`);
-    lineas.push(`Se reparte: ${importe(reparto.repartible)}`);
+    // Con un solo dueño "Se reparte" repetiria la cifra de "Tu utilidad" justo abajo.
+    if (reparto.primo !== 0) lineas.push(`Se reparte: ${importe(reparto.repartible)}`);
   }
   // Los cortes viejos traen su mitad de Primo y se siguen leyendo igual; los nuevos no.
   if (reparto.primo !== 0) {

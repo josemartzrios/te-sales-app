@@ -130,8 +130,8 @@ En **Corte**, el ingreso del día ya viene sumado de las ventas (calle × $20, m
 canal para validarlo de un vistazo contra el efectivo real. Se capturan los gastos línea por línea
 (concepto + de qué sobre salió + monto), abajo se teclea lo que **se aparta hoy** para la gasolina del
 domingo —vacío el día que no se aparte nada— y al final, en un solo bloque, baja el desglose completo:
-ingreso, gastos del día, lo apartado, y lo que queda (el bloque se titula *Se reparte*, pero ya no se
-parte con nadie: es **lo tuyo**).
+ingreso, gastos del día, lo apartado, y lo que queda: **tu utilidad** (los cortes viejos con Primo
+conservan su título *Se reparte* y sus dos tarjetas).
 
 Después, **Al cerrar** dice lo único que hay que ejecutar: cuánto efectivo debería haber en el bulto,
 para compararlo contra el bulto. Ese número sale de cómo está la caja, y **Ver la caja** lleva directo a la
@@ -150,7 +150,7 @@ Luego, el respaldo entre los dos teléfonos: ver **Ritual diario** más abajo.
 
 ### Si te equivocas
 
-- **Un toque de más:** el botón **`−1`** anula tu última venta de calle en ese lugar.
+- **Un toque de más:** el botón **`−1`** anula tu última venta de botellas en la calle en ese lugar.
   No pregunta nada; si también le picas de más, un `+1` lo arregla. Ojo: se lleva **la venta completa**,
   así que un `−1` sobre un `+3` quita las tres piezas y hay que volver a capturarlas. Si el `−1` está
   apagado es que no hay ventas de calle tuyas en este lugar hoy.
@@ -535,9 +535,8 @@ Un lote de 18 vendido a $20 = $360, con $154 de té pagados del fondo
 y ese día se apartaron $85 para la gasolina
 
 Utilidad     $206.00
-Se apartó    -$85.00   <- capturado, se aparta antes de repartir
-Se reparte   $121.00
-  Lo tuyo    $121.00
+Se apartó    -$85.00   <- capturado, se aparta antes de lo tuyo
+Tu utilidad  $121.00
 ```
 
 Los cortes cerrados cuando Primo era socio **no se recalculan**: se siguen mostrando con sus dos tarjetas y
