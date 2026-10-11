@@ -26,6 +26,7 @@ import {
   mezclar,
   moverVenta,
   panelVendedor,
+  panelesDelDia,
   planCorreccionLugar,
   planRespaldo,
   porDia,
@@ -46,6 +47,7 @@ import {
   turnoEn,
   ultimaVentaActiva,
   validarEvento,
+  vendedoresDelDia,
   ventasActivas,
   ventasDeFecha,
 } from './dominio';
@@ -588,8 +590,12 @@ describe('cuadre del dia', () => {
     expect(fran).toMatchObject({ cargado: 18, vendido: 6, restante: 12, cuadra: true });
   });
 
-  it('hieleras devuelve siempre a los dos vendedores', () => {
-    expect(hieleras([], HOY).map((h) => h.vendedor)).toEqual(['Fran', 'Primo']);
+  it('hieleras de un dia sin eventos devuelve solo a quien vende hoy', () => {
+    expect(hieleras([], HOY).map((h) => h.vendedor)).toEqual(['Fran']);
+  });
+
+  it('hieleras conserva a Primo en un dia historico donde tuvo eventos', () => {
+    expect(hieleras(eventos, HOY).map((h) => h.vendedor)).toEqual(['Fran', 'Primo']);
   });
 });
 
@@ -885,6 +891,19 @@ describe('panelVendedor', () => {
     const panel = panelVendedor(eventos, 'Primo', HOY, ['Plazuela']);
     expect(panel.hielera).toMatchObject({ cargado: 0, vendido: 99, sinCarga: true });
     expect(panel.mejorPunto).toEqual({ etiqueta: 'Plazuela', valor: 99 });
+  });
+
+  it('separa los litros de las botellas', () => {
+    const conLitros: AppEvent[] = [
+      ...eventos,
+      carga({ id: 'cl', ts: '2026-07-30T07:05:00', qty: 10, product: 'litro' }),
+      venta({ id: 'l1', ts: '2026-07-30T09:10:00', qty: 3, product: 'litro' }),
+    ];
+    const panel = panelVendedor(conLitros, 'Fran', HOY, ['Plazuela', 'Parque Sinaloa']);
+    expect(panel.hielera).toMatchObject({ cargado: 60, vendido: 20, restante: 40 });
+    expect(panel.litro).toMatchObject({ cargado: 10, vendido: 3, restante: 7 });
+    expect(panel.calle).toBe(15);
+    expect(panel.mayoreo).toBe(5);
   });
 
   it('sin ventas no inventa mejor lugar ni mejor hora', () => {
@@ -1638,5 +1657,43 @@ describe('producto', () => {
     expect(validarEvento(p)).toEqual(p);
     const t = traspaso({ id: 't', ts: '2026-07-30T08:00:00', from: 'Primo', to: 'Fran', qty: 3 });
     expect(validarEvento(t)).toEqual(t);
+  });
+});
+
+describe('vendedoresDelDia', () => {
+  const HOY = '2026-07-30';
+  const PUNTOS = ['Plazuela'];
+
+  it('un dia nuevo tiene solo al vendedor activo', () => {
+    const eventos: AppEvent[] = [venta({ id: 'a', ts: '2026-07-30T09:00:00' })];
+    expect(vendedoresDelDia(eventos, HOY)).toEqual(['Fran']);
+    expect(vendedoresDelDia([], HOY)).toEqual(['Fran']);
+    expect(panelesDelDia(eventos, HOY, PUNTOS).map((p) => p.vendedor)).toEqual(['Fran']);
+  });
+
+  it('un dia historico con Primo conserva a los dos, en el orden de siempre', () => {
+    const eventos: AppEvent[] = [
+      venta({ id: 'p', ts: '2026-07-30T09:00:00', vendor: 'Primo' }),
+      venta({ id: 'f', ts: '2026-07-30T10:00:00' }),
+    ];
+    expect(vendedoresDelDia(eventos, HOY)).toEqual(['Fran', 'Primo']);
+    expect(panelesDelDia(eventos, HOY, PUNTOS).map((p) => p.vendedor)).toEqual(['Fran', 'Primo']);
+  });
+
+  it('Primo cuenta si solo cargo, marco lugar o paso botellas ese dia', () => {
+    const conCarga: AppEvent[] = [carga({ id: 'c', ts: '2026-07-30T07:00:00', vendor: 'Primo' })];
+    const conTurno: AppEvent[] = [turno({ id: 't', ts: '2026-07-30T07:00:00', vendor: 'Primo' })];
+    const conTraspaso: AppEvent[] = [
+      traspaso({ id: 'x', ts: '2026-07-30T08:00:00', from: 'Fran', to: 'Primo' }),
+    ];
+    for (const eventos of [conCarga, conTurno, conTraspaso]) {
+      expect(vendedoresDelDia(eventos, HOY)).toEqual(['Fran', 'Primo']);
+    }
+  });
+
+  it('los eventos de Primo de otro dia no lo traen', () => {
+    const eventos: AppEvent[] = [venta({ id: 'p', ts: '2026-07-29T09:00:00', vendor: 'Primo' })];
+    expect(vendedoresDelDia(eventos, HOY)).toEqual(['Fran']);
+    expect(hieleras(eventos, HOY).map((h) => h.vendedor)).toEqual(['Fran']);
   });
 });

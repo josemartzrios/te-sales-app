@@ -767,12 +767,17 @@ dialog .segmentado .seg {
   font-weight: 600;
 }
 
-/* Lo unico que Fran necesita leer al final del dia: cuanto le toca a cada quien. */
+/* Lo unico que Fran necesita leer al final del dia: cuanto le toca. Dos tarjetas solo en los
+   cortes viejos, cuando Primo se llevaba la mitad. */
 .corte-reparto {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
   margin: 12px 0;
+}
+
+.corte-reparto-uno {
+  grid-template-columns: 1fr;
 }
 
 .corte-socio {
@@ -798,10 +803,16 @@ dialog .segmentado .seg {
   margin-bottom: 16px;
 }
 
+/* Calle, mayoreo y litro en una fila: caben en el ancho de un telefono. */
 .corte-precios {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.corte-precios input {
+  min-width: 0;
+  width: 100%;
 }
 
 .corte-precios label {

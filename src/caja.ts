@@ -44,15 +44,20 @@ export const NOMBRE_SOBRE: Record<Sobre, string> = {
   primo: 'Sueldo de Primo',
 };
 
-/** Los dos socios. Su sobre acumula lo que les toca y de ahi lo sacan cuando cobran. */
+/**
+ * Los sobres que se cobran: acumulan lo de su dueño y de ahi se saca cuando cobra. Hoy solo el
+ * de Fran se llena al cerrar; el de Primo sigue aqui porque los cortes viejos le abonaron su
+ * mitad, y mientras ese saldo exista tiene que poder cobrarse (la UI lo usa para `cobrable`).
+ */
 export const SOBRES_SOCIOS: readonly Sobre[] = ['fran', 'primo'];
 
 /**
  * Con cuanto arranca cada sobre antes de cualquier movimiento.
  *
  * Fondo y cambio son rotatorios: su objetivo es fijo y no crece, solo se repone cuando alguien
- * saca de ahi. Los otros cuatro arrancan en cero y se llenan al cerrar el corte: gasolina y gas
- * con lo que se haya apartado ese dia, los de los socios con su mitad.
+ * saca de ahi. Los otros cuatro arrancan en cero: gasolina y gas se llenan con lo apartado, el
+ * de Fran con lo que le toca al cerrar cada corte. El de Primo solo trae lo que le abonaron los
+ * cortes de cuando eran dos socios a mitad.
  */
 export const BASE_SOBRE: Record<Sobre, number> = {
   fondo: FONDO_GASTO,
@@ -142,7 +147,7 @@ export function movimientoDeCobro(entrada: {
  * entra y salda. Nunca cambia lo que un sobre deberia traer.
  *
  * Esa columna solo la mueven los dos cierres, que son los que conocen la regla:
- *   - el corte del dia aparta   (sube el objetivo de gasolina, gas y Primo)
+ *   - el corte del dia aparta   (sube el objetivo de gasolina y de lo de Fran)
  *   - el cierre del domingo paga (lo baja al vaciarlos)
  *
  * Asi "saque 18 de la gasolina para las botellas" queda como deuda —que es lo que es— sin
@@ -335,7 +340,7 @@ export type PlanCaja = {
   /** Lo que se aparta hoy. Vacio si no se capturo nada. */
   apartados: { sobre: keyof Apartado; centavos: number }[];
   totalApartado: number;
-  /** Lo que queda para los socios despues de apartar. Negativo en un dia malo. */
+  /** Lo que queda despues de apartar, todo para Fran. Negativo en un dia malo. */
   repartible: number;
   /** Todo lo repartible es de Fran. `primo` queda en 0: se conserva por los cortes viejos. */
   fran: number;
@@ -347,32 +352,31 @@ export type PlanCaja = {
 };
 
 /**
- * Se paga todo y se reparte lo que queda. En ese orden, que es como se opera con la mano:
+ * Se paga todo y lo que queda es de Fran. En ese orden, que es como se opera con la mano:
  *
  *   1. la utilidad ya trae restados los gastos del dia (el corte la calculo, y ahi va el gas de
  *      Mama Juani los dias que se le paga)
  *   2. de ahi se aparta la gasolina que Fran capturo en el corte
- *   3. lo que sobra se parte a la mitad, y cada mitad se va al sobre de su dueño
+ *   3. lo que sobra es el repartible, y va completo al sobre de Fran
  *
  * El apartado es exactamente lo tecleado: no hay tarifa por dia de venta ni tope contra la
  * utilidad. Recortarlo en silencio porque "no alcanzo" haria que la caja dijera una cosa y el
- * bulto otra; si un dia se aparta mas de lo que se gano, el repartible sale negativo y eso lo
- * absorben los dos, igual que cualquier mal dia.
+ * bulto otra; si un dia se aparta mas de lo que se gano, el repartible sale negativo y lo
+ * absorbe el sobre de Fran, igual que cualquier mal dia.
  *
- * El apartado sale ANTES de repartir, o sea que lo pagan los dos. Antes salia solo del lado de
- * Fran —Primo cobraba su mitad completa y Fran financiaba la gasolina— y eso no es mitad y
- * mitad. Un dia de 360 con 154 de te daba 0 para Fran y 103 para Primo; ahora da 60.50 y 60.50.
+ * Historia: cuando Fran y Primo eran socios a mitad, el repartible se partia en dos y cada
+ * mitad iba a su sobre. Los cortes cerrados entonces guardan esa mitad de Primo y su sobre puede
+ * traer saldo todavia; nada de eso se recalcula. Hoy `primo` siempre sale 0.
  *
- * La deuda NO se cobra aqui, y esa es la otra correccion. Sacar 154 del fondo para comprar el
- * te y capturar el gasto de 154 es el MISMO peso: el gasto ya bajo la utilidad de los dos, y el
- * fondo se rellena solo con el efectivo que la caja retiene. Restar ademas una linea de
- * "reponer" cobraba el gasto una segunda vez, y completa, a Fran. Se asume que todo prestamo
- * termina en un gasto capturado, que es como se opera: los gastos se cubren con el fondo.
+ * La deuda NO se cobra aqui. Sacar 154 del fondo para comprar el te y capturar el gasto de 154
+ * es el MISMO peso: el gasto ya bajo la utilidad, y el fondo se rellena solo con el efectivo
+ * que la caja retiene. Restar ademas una linea de "reponer" cobraria el gasto una segunda vez.
+ * Se asume que todo prestamo termina en un gasto capturado, que es como se opera: los gastos
+ * se cubren con el fondo.
  *
- * En un dia malo el repartible es negativo y los dos sobres bajan. Nadie pone dinero de su
- * bolsa: el faltante se queda registrado en el sobre de cada quien y se cobra solo el dia que
- * vuelve a haber utilidad. Por eso Fran necesita sobre igual que Primo — sin el, su parte del
- * mal dia se evaporaba y terminaba absorbiendola completa.
+ * En un dia malo el repartible es negativo y el sobre de Fran baja. Nadie pone dinero de su
+ * bolsa: el faltante se queda registrado en el sobre y se compensa solo el dia que vuelve a
+ * haber utilidad.
  */
 export function planCaja(entrada: {
   utilidad: number;
@@ -488,7 +492,7 @@ function prefijoDeGasto(gastoId: string): string {
 
 /**
  * Los movimientos que escribe capturar un gasto en el corte, con el efectivo saliendo del sobre
- * que se eligio. Siempre como prestamo: el gasto ya bajo la utilidad de los dos y la caja se
+ * que se eligio. Siempre como prestamo: el gasto ya bajo la utilidad y la caja se
  * rellena sola con el efectivo que retiene al cerrar, asi que lo que salio del sobre hay que
  * reponerlo.
  *
@@ -641,7 +645,7 @@ export function movimientoDeArqueo(entrada: {
  * 218, asi que se restarian dos veces y el bulto pareceria tener 200 de menos.
  *
  * La unica salida que si hay que restar aparte es el sueldo de Primo: su mitad ya salio de la
- * utilidad el dia que se gano, asi que pagarsela mueve efectivo sin volver a costar. La
+ * utilidad el dia que se gano (en los cortes de cuando eran dos; los nuevos no le abonan), asi que pagarsela mueve efectivo sin volver a costar. La
  * gasolina y el gas no entran aqui: cuando se pagan desde el corte llevan detras su linea de
  * gasto, que ya bajo la utilidad.
  *

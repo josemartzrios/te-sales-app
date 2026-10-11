@@ -799,8 +799,28 @@ export function enHielera(
   return hieleraDe(eventos, vendedor, clave).restante;
 }
 
+/**
+ * Quienes salen en las pantallas de un dia: los que venden hoy, mas cualquiera que haya dejado
+ * algo escrito esa fecha. Asi un dia nuevo muestra un solo vendedor y un dia viejo con Primo se
+ * sigue leyendo completo, con los dos.
+ */
+export function vendedoresDelDia(eventos: readonly AppEvent[], clave: string): Vendedor[] {
+  const presentes = new Set<Vendedor>(VENDEDORES_ACTIVOS);
+  for (const e of eventos) {
+    if (e.type === 'void' || claveFecha(e.ts) !== clave) continue;
+    if (e.type === 'transfer') {
+      presentes.add(e.from);
+      presentes.add(e.to);
+    } else {
+      presentes.add(e.vendor);
+    }
+  }
+  return VENDEDORES.filter((v) => presentes.has(v));
+}
+
+/** Las hieleras de botella del dia, una por cada vendedor de `vendedoresDelDia`. */
 export function hieleras(eventos: readonly AppEvent[], clave: string): Hielera[] {
-  return VENDEDORES.map((v) => hieleraDe(eventos, v, clave));
+  return vendedoresDelDia(eventos, clave).map((v) => hieleraDe(eventos, v, clave));
 }
 
 /**
@@ -989,7 +1009,11 @@ export function porLugarYHora(ventas: readonly SaleEvent[]): Matriz {
 
 export type PanelVendedor = {
   vendedor: Vendedor;
+  /** La hielera de botellas. */
   hielera: Hielera;
+  /** La hielera de litros, aparte: no se suman piezas de tamanos distintos. */
+  litro: Hielera;
+  /** Botellas en la calle y en mayoreo. Los litros van en `litro.vendido`. */
   calle: number;
   mayoreo: number;
   ritmo: Ritmo;
@@ -1009,6 +1033,7 @@ export function panelVendedor(
   const ventas = ventasActivas(eventos).filter(
     (v) => v.vendor === vendedor && claveFecha(v.ts) === clave
   );
+  const botellas = filtrarProducto(ventas, 'botella');
   const barrasPunto = porPunto(ventas, puntos);
   const barrasHora = porHora(ventas);
   const pico = [...barrasHora].sort(descendente)[0];
@@ -1016,8 +1041,9 @@ export function panelVendedor(
   return {
     vendedor,
     hielera: hieleraDe(eventos, vendedor, clave),
-    calle: totalPiezas(ventas.filter((v) => v.channel === 'calle')),
-    mayoreo: totalPiezas(ventas.filter((v) => v.channel === 'mayoreo')),
+    litro: hieleraDe(eventos, vendedor, clave, 'litro'),
+    calle: totalPiezas(botellas.filter((v) => v.channel === 'calle')),
+    mayoreo: totalPiezas(botellas.filter((v) => v.channel === 'mayoreo')),
     ritmo: ritmo(ventas),
     porPunto: barrasPunto,
     porHora: barrasHora,
@@ -1031,7 +1057,7 @@ export function panelesDelDia(
   clave: string,
   puntos: readonly string[]
 ): PanelVendedor[] {
-  return VENDEDORES.map((v) => panelVendedor(eventos, v, clave, puntos));
+  return vendedoresDelDia(eventos, clave).map((v) => panelVendedor(eventos, v, clave, puntos));
 }
 
 // ---------- validacion de datos externos (import) ----------

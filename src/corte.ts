@@ -64,7 +64,7 @@ export type LineaGasto = {
  *
  * El gas de Mama Juani NO se aparta: se le paga cada dos lotes con el efectivo de la venta de
  * ese dia, asi que entra como un gasto mas el dia que se le paga. Apartarlo Y capturarlo como
- * gasto lo cobraria dos veces —una al apartar, otra al pagar—, y quien lo paga son los dos.
+ * gasto lo cobraria dos veces —una al apartar, otra al pagar—.
  *
  * Cero = hoy no se aparto nada. No se pinta linea ni se escribe movimiento.
  */
@@ -116,15 +116,20 @@ export type Reparto = {
   utilidad: number;
   /**
    * Lo que se aparto el dia —gasolina y gas— y se guarda en la caja al cerrar. Se resta
-   * despues de la utilidad y antes de partir a la mitad, asi que lo pagan los dos.
+   * despues de la utilidad y antes de lo que se lleva Fran.
    *
    * Es lo que Fran capturo en el corte de ese dia; los cortes cerrados cuando salia de una
    * tarifa fija traen lo que aquella tarifa aparto, y el pasado no se recalcula.
    */
   apartado: number;
-  /** utilidad - apartado: lo que de verdad se parte entre los dos. */
+  /** utilidad - apartado: lo que de verdad se lleva Fran. */
   repartible: number;
+  /** Igual a `repartible` en los cortes nuevos. */
   fran: number;
+  /**
+   * 0 en los cortes nuevos: Fran es el unico dueño. Los cortes cerrados cuando eran dos socios
+   * a mitad guardan aqui la mitad de Primo y se leen tal cual.
+   */
   primo: number;
 };
 
@@ -313,7 +318,7 @@ export function cerrarCorte(entrada: {
   precios: Precios;
   device: string;
   cerradoEn: string;
-  /** Lo que se aparto para gasolina y gas. Se resta antes de partir a la mitad. */
+  /** Lo que se aparto para gasolina y gas. Se resta antes de lo que se lleva Fran. */
   apartado?: number;
   /** Como quedo la caja despues de aplicar los movimientos del cierre. */
   caja?: CajaAlCerrar;

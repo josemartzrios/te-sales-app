@@ -148,7 +148,7 @@ const estado: {
   fechaCorte: string;
   rango: Rango;
   canal: Canal | 'todo';
-  vendedorStats: Vendedor | 'todos';
+  productoStats: Producto | 'todos';
 } = {
   vista: 'vender',
   vistaPrevia: 'vender',
@@ -156,7 +156,7 @@ const estado: {
   fechaCorte: claveFecha(new Date()),
   rango: 'hoy',
   canal: 'calle',
-  vendedorStats: 'todos',
+  productoStats: 'todos',
 };
 
 const SECUNDARIAS: readonly Vista[] = ['stats', 'ajustes'];
@@ -468,9 +468,15 @@ function capturarCargaRetro(datos: DatosCargaRetro): void {
     toast('Cantidad invalida');
     return;
   }
-  const carga = crearCarga({ ts, vendor: datos.vendedor, qty: datos.qty, device: ajustes.deviceId });
+  const carga = crearCarga({
+    ts,
+    vendor: datos.vendedor,
+    qty: datos.qty,
+    device: ajustes.deviceId,
+    product: datos.producto,
+  });
   if (!aplicarEventos([...eventos, carga])) return;
-  toast(`Carga retroactiva: ${datos.vendedor} ×${datos.qty}`);
+  toast(`Carga retroactiva: ${datos.qty} ${NOMBRE_PRODUCTO[datos.producto].plural}`);
   estado.fecha = datos.fecha;
   render();
 }
@@ -509,6 +515,10 @@ function capturarRetro(datos: DatosRetro): void {
     toast('Cantidad invalida');
     return;
   }
+  if (datos.producto === 'litro' && datos.canal !== 'calle') {
+    toast('El litro solo se vende en la calle');
+    return;
+  }
   const venta = crearVenta({
     ts,
     point: datos.punto,
@@ -517,6 +527,7 @@ function capturarRetro(datos: DatosRetro): void {
     qty: datos.qty,
     device: ajustes.deviceId,
     retro: true,
+    product: datos.producto,
   });
   if (!aplicarEventos([...eventos, venta])) return;
   toast(`Retroactiva: ${datos.punto} ×${datos.qty}`);
@@ -927,14 +938,16 @@ function cambiarApartado(gasolina: string): void {
   toast(`Se aparta ${importe(porGasolina)} de este día`);
 }
 
-function cambiarPrecios(calle: string, mayoreo: string): void {
-  const porCalle = centavosDesde(calle);
-  const porMayoreo = centavosDesde(mayoreo);
-  if (porCalle === null || porCalle < 1 || porMayoreo === null || porMayoreo < 1) {
+function cambiarPrecios(calle: string, mayoreo: string, litro: string): void {
+  const nuevos: Precios = {
+    calle: centavosDesde(calle) ?? 0,
+    mayoreo: centavosDesde(mayoreo) ?? 0,
+    litro: centavosDesde(litro) ?? 0,
+  };
+  if (nuevos.calle < 1 || nuevos.mayoreo < 1 || nuevos.litro < 1) {
     toast('Precio invalido');
     return;
   }
-  const nuevos: Precios = { calle: porCalle, mayoreo: porMayoreo, litro: precios.litro };
   const error = escribirPrecios(nuevos);
   if (error !== null) {
     toast(error, 5000);
@@ -949,8 +962,7 @@ function cambiarPrecios(calle: string, mayoreo: string): void {
  * Cierre irreversible. Guarda el snapshot del ingreso calculado en este momento, no una
  * referencia a las ventas: corregir manana una venta de hoy no puede mover este corte.
  *
- * Tambien mueve la caja: aparta lo del dia, le abona su mitad a Primo y devuelve lo prestado
- * hasta donde alcance. Los movimientos van primero y el corte despues, porque el corte guarda
+ * Tambien mueve la caja: aparta lo del dia y le abona a Fran lo que le toca. Los movimientos van primero y el corte despues, porque el corte guarda
  * como quedo la caja: al reves guardaria un snapshot de algo que todavia no pasaba.
  */
 function cerrarCorteDelDia(): void {
@@ -974,10 +986,8 @@ function cerrarCorteDelDia(): void {
     `Cerrar el corte del ${fechaLegible(fecha)}?\n\n` +
       `Utilidad ${importe(reparto.utilidad)}\n` +
       `Se aparta ${importe(plan.totalApartado)}\n` +
-      `Se reparte ${importe(plan.repartible)}\n\n` +
-      `Tuyo ${importe(plan.fran)}\n` +
-      `Primo ${importe(plan.primo)}\n\n` +
-      'Cada mitad se va a su sobre. Un corte cerrado no se edita ni se borra.'
+      `Lo tuyo ${importe(plan.fran)}\n\n` +
+      'Se va a tu sobre. Un corte cerrado no se edita ni se borra.'
   );
   if (!confirmado) return;
 
@@ -1099,7 +1109,7 @@ function vistaActual(): HTMLElement {
         alMoverVenta: pedirLugarDeVenta,
         alCorregirLugar: () => pedirCorreccionLugar(estado.fecha),
         alAbrirRetro: () => abrirRetro(ajustes, estado.fecha, capturarRetro),
-        alAbrirCargaRetro: () => abrirCargaRetro(ajustes, estado.fecha, capturarCargaRetro),
+        alAbrirCargaRetro: () => abrirCargaRetro(estado.fecha, capturarCargaRetro),
         alIrA: irAVista,
       });
     case 'caja':
@@ -1145,7 +1155,7 @@ function vistaActual(): HTMLElement {
         ajustes,
         rango: estado.rango,
         canal: estado.canal,
-        vendedor: estado.vendedorStats,
+        producto: estado.productoStats,
         ahora,
         alCambiarRango: (r) => {
           estado.rango = r;
@@ -1155,8 +1165,8 @@ function vistaActual(): HTMLElement {
           estado.canal = c;
           render();
         },
-        alCambiarVendedor: (v) => {
-          estado.vendedorStats = v;
+        alCambiarProducto: (x) => {
+          estado.productoStats = x;
           render();
         },
         alVolver: () => irAVista(estado.vistaPrevia),
@@ -1169,9 +1179,6 @@ function vistaActual(): HTMLElement {
         alDescargarRespaldo: descargarRespaldo,
         alAgregarPunto: agregarPunto,
         alQuitarPunto: eliminarPunto,
-        alCambiarVendedorDefecto: (v) => {
-          if (aplicarAjustes({ ...ajustes, defaultVendor: v })) render();
-        },
         alExportar: exportar,
         alCompartir: () => void compartirResumen(),
         alImportar: (archivo) => void importar(archivo),
