@@ -31,9 +31,6 @@ producto lleva su propia hielera.
 El lugar (el **turno**) dice a dónde se acredita cada pieza. Con el registro por rato se elige ahí mismo y
 no hay que declararlo aparte: registrar abre el turno a la hora que le pongas.
 
-Si vas a **contar en vivo** con el `+1`, sí hay que marcar el lugar antes de la primera venta: sin turno la
-app no muestra el botón, porque no sabría a dónde acreditar la pieza.
-
 ### 3. Vender
 
 Lo primero en **Vender** es el registro por rato, que es como se trabaja. No se teclea lo vendido: se
@@ -76,27 +73,17 @@ Físicamente eso no sale de la nada: es una carga que no se registró. La captur
 mismo, ya en el producto que sobra. Registras las que faltan y vuelves a contar. No se escribe nada a
 medias, **ni del otro producto**: los números se tecleron juntos y se vuelven a teclear juntos.
 
-#### Lo que esto implica y con el `+1` no pasaba
+#### Lo que esto implica
 
 **Todo lo que salió de la hielera cuenta como venta.** Una botella rota, regalada o que se llevó alguien baja
 el conteo igual que una vendida, así que se va a cobrar en el ingreso esperado del Corte y ahí va a aparecer
-como **faltante de efectivo**. Es el precio de no ir tocando `+1` por botella; si empieza a pasar seguido,
+como **faltante de efectivo**. Es el precio de contar lo que queda en vez de ir botella por botella; si empieza a pasar seguido,
 el arreglo es un campo de "no cobradas" junto al conteo.
-
-### Contar en vivo
-
-Más abajo, bajo *¿Contar en vivo?*, sigue el botón grande **`+1`**, un toque por botella, para el rato que
-se quiera contar en vivo. La app guarda sola la hora y el lugar. El conteo en vivo es de botellas.
-
-- **`+2`** y **`+3`** para cuando se llevan varias de un jalón.
-- La tarjeta de arriba va diciendo dónde estás, desde qué hora, cuánto llevas ahí y cuántas piezas van.
-- El número de **Hielera** en la barra superior parpadea en cada venta: es la confirmación de reojo, sin
-  tener que leer.
 
 ### 4. Al cambiar de lugar
 
-Tocar **Cambiar** en la tarjeta y elegir el lugar nuevo. Ya está: el turno anterior se cierra solo a esa
-hora, no hay botón de "terminar".
+Elige el lugar nuevo en el selector *Lugar* y registra el conteo de ahí. Ya está: el turno anterior se
+cierra solo a esa hora, no hay botón de "terminar".
 
 ### 5. Mayoreo
 
@@ -150,13 +137,8 @@ Luego, el respaldo entre los dos teléfonos: ver **Ritual diario** más abajo.
 
 ### Si te equivocas
 
-- **Un toque de más:** el botón **`−1`** anula tu última venta de botellas en la calle en ese lugar.
-  No pregunta nada; si también le picas de más, un `+1` lo arregla. Ojo: se lleva **la venta completa**,
-  así que un `−1` sobre un `+3` quita las tres piezas y hay que volver a capturarlas. Si el `−1` está
-  apagado es que no hay ventas de calle tuyas en este lugar hoy.
 - **Te moviste y se te olvidó marcar el lugar:** el caso clásico — estabas en Parque Sinaloa, te fuiste a la
-  Plazuela, vendiste, y la pieza se acreditó al parque. Toca **Estábamos en otro lugar** (está en **Vender**,
-  debajo de los botones, y también en **Hoy**). Eliges el lugar bueno y **desde qué hora**: esa hora es el
+  Plazuela, vendiste, y la pieza se acreditó al parque. Toca **Estabas en otro lugar** (está en **Hoy**). Eliges el lugar bueno y **desde qué hora**: esa hora es el
   corte, todo lo vendido de ahí en adelante se pasa. Dos atajos llenan la hora sola, y se llaman por lo que
   hacen: **Solo la última venta** (el toque suelto en el lugar de al lado) y **Todo el turno** (tocaste mal el
   lugar desde que llegaste). Lo de en medio —*me moví a las 17:20 y vendí tres*— se teclea a mano.
@@ -167,7 +149,7 @@ Luego, el respaldo entre los dos teléfonos: ver **Ritual diario** más abajo.
   vista. **No mueve un peso**: el corte suma piezas por canal y nunca mira el punto, así que se puede corregir
   aunque el corte de ese día ya esté cerrado.
 - **Marcaste el lugar equivocado:** vas a **Hoy** → Movimientos, buscas la línea con la etiqueta `LUGAR` y
-  tocas **Anular**. Luego marcas el correcto. (Si ya vendiste desde ahí, mejor usa *Estábamos en otro lugar*:
+  tocas **Anular**. Luego marcas el correcto. (Si ya vendiste desde ahí, mejor usa *Estabas en otro lugar*:
   anular el `LUGAR` deja las piezas donde están.)
 - **Cualquier otra cosa** (una carga mal puesta, una venta vieja): en **Hoy** → Movimientos, **Anular** en
   esa línea y registrar la correcta. Nada se borra: la anulación queda escrita y la línea aparece tachada.
@@ -179,7 +161,7 @@ Luego, el respaldo entre los dos teléfonos: ver **Ritual diario** más abajo.
 No se pierde nada: esas piezas cuentan igual en la hielera, en el total del día y en Stats. Solo que la
 vista Hoy avisa *"N piezas quedaron fuera de turno"*, porque no se les puede atribuir un rato concreto.
 
-**Estábamos en otro lugar** también arregla esto: marca el lugar a la hora que le digas y las piezas entran
+**Estabas en otro lugar** también arregla esto: marca el lugar a la hora que le digas y las piezas entran
 al turno. Si mueves una venta suelta con **Mover** y no hay turno que la cubra en el lugar nuevo, el aviso
 aparecerá — la venta está bien acreditada, lo que falta es el turno.
 
@@ -240,9 +222,7 @@ más larga apenas cabía, y *Ajustes* —que se toca una vez al mes— pesaba lo
 diario tiene que ser lo que se ve.
 
 - **Vender** — el caso común. Arriba, *¿Cuántas te quedan?*, la fila de litros si se cargaron, el lugar y la
-  hora de llegada, en un solo *Registrar*; abajo de él, *Cargar hielera* y *Mayoreo*. Más abajo, el conteo
-  en vivo: la tarjeta del turno y el botón grande `+1` para las veces que se quiera contar botella por
-  botella. En la barra de arriba, **Hielera** y **Hoy** cuentan botellas; los litros salen aparte.
+  hora de llegada, en un solo *Registrar*; abajo de él, *Cargar hielera* y *Mayoreo*. En la barra de arriba, **Hielera** y **Hoy** cuentan botellas; los litros salen aparte.
 - **Hoy** — el tablero del día: en hielera, vendió, ritmo por hora, mejor lugar y mejor hora, la lista de
   turnos con su franja y su ritmo, más las barras por lugar y por hora. Abajo, el registro de movimientos
   (ventas, cargas y lugares; los traspasos viejos también aparecen) con su botón de anular, y la captura
@@ -271,9 +251,9 @@ admite variantes por tema.
 
 ## Los turnos
 
-Se vende como una hora aproximada por lugar, así que la app trabaja con esa unidad. Antes de vender,
-el vendedor marca dónde está: eso registra un evento `shift`, que **no cuenta ninguna pieza**, solo dice
-"a las 17:03 Fran se paró en la Plazuela". Desde ahí, cada `+1` se acredita a ese lugar con su hora real.
+Se vende como una hora aproximada por lugar, así que la app trabaja con esa unidad. Al registrar un
+conteo, el lugar y la hora quedan marcados: eso registra un evento `shift`, que **no cuenta ninguna pieza**, solo dice
+"a las 17:03 Fran se paró en la Plazuela". Desde ahí, lo que se registra se acredita a ese lugar.
 
 - **El turno se cierra solo.** No hay botón de "terminar": el turno acaba cuando se marca el siguiente
   lugar. Cambiar de lugar es un toque, y ahí queda partido el día.
@@ -586,11 +566,6 @@ se recalcula el pasado**.
   escribe encima.
 - Una venta, una carga, un turno o un traspaso se anulan **una sola vez**. Para corregir una carga mal
   capturada se anula y se registra la correcta.
-- El botón **-1** de la pantalla Vender no borra ni resta: anula **entera** la última venta activa de calle
-  de Fran en ese punto. Si esa venta traía tres piezas (un `+3`), se van las tres y hay que
-  volver a capturar — editarla para dejarla en dos sería escribir sobre el histórico. Se deshabilita
-  cuando vas en cero ahí y no pide confirmación: es la corrección de un toque de más, y si
-  también se toca por error basta con un `+1`.
 - **Corregir el lugar tampoco edita.** Mover una venta de punto es un `void` sobre la vieja más una venta
   nueva con la **misma hora, cantidad, canal y vendedor**, y un campo `movedFrom` con el lugar del que vino
   — sin él la línea nueva sería indistinguible de una venta cualquiera y el histórico no contaría el error.

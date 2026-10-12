@@ -6,13 +6,10 @@ import {
   NOMBRE_APP,
   PRODUCTOS,
   VENDEDORES,
-  VENDEDORES_ACTIVOS,
   VENDEDOR_ACTIVO,
-  anularUltimaVenta,
   claveFecha,
   crearAnulacion,
   crearCarga,
-  crearTurno,
   crearVenta,
   eventosDeArchivo,
   eventosDeHora,
@@ -223,48 +220,6 @@ function registrarVenta(entrada: {
   toast(entrada.aviso);
   render();
   destacarHielera();
-}
-
-/** Corregir un toque de mas no pide confirmacion: el propio -1 es la correccion de un error rapido,
- *  y si tambien se toca por error basta un +1. Todo queda en el historico. */
-function restarUna(punto: string): void {
-  const anulacion = anularUltimaVenta(
-    eventos,
-    punto,
-    claveFecha(new Date()),
-    VENDEDOR_ACTIVO,
-    ajustes.deviceId,
-    isoLocal(new Date())
-  );
-  if (anulacion === null) {
-    toast(`No hay ventas hoy en ${punto}`);
-    return;
-  }
-  if (!aplicarEventos([...eventos, anulacion])) return;
-  toast('Última venta anulada');
-  render();
-  destacarHielera();
-}
-
-/**
- * Marcar lugar abre el turno de quien vende hoy. Si ya estaba en ese punto no se escribe nada:
- * un evento repetido partiria en dos un rato que fue uno solo.
- */
-function marcarLugar(punto: string): void {
-  const hoy = claveFecha(new Date());
-  const ts = isoLocal(new Date());
-  const llegan = VENDEDORES_ACTIVOS.filter((v) => turnoActual(eventos, v, hoy)?.point !== punto);
-
-  if (llegan.length === 0) {
-    toast(`Ya estás en ${punto}`);
-    return;
-  }
-  const turnos = llegan.map((v) =>
-    crearTurno({ ts, point: punto, vendor: v, device: ajustes.deviceId })
-  );
-  if (!aplicarEventos([...eventos, ...turnos])) return;
-  toast(`En ${punto}`);
-  render();
 }
 
 /** El conteo de un producto en la forma que pide `planConteo`: solo el vendedor activo conto. */
@@ -1082,11 +1037,6 @@ function vistaActual(): HTMLElement {
         ajustes,
         hoy,
         ahora,
-        alMarcarLugar: marcarLugar,
-        alVender: (punto, qty) =>
-          registrarVenta({ punto, canal: 'calle', qty, aviso: `+${qty} · ${punto}` }),
-        alRestar: restarUna,
-        alCorregirLugar: () => pedirCorreccionLugar(hoy),
         alAbrirMayoreo: () =>
           abrirMayoreo(ajustes.points, (punto, qty) =>
             registrarVenta({ punto, canal: 'mayoreo', qty, aviso: `Mayoreo ${punto} ×${qty}` })

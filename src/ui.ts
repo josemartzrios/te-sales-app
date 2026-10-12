@@ -65,12 +65,10 @@ import {
   porLugarYHora,
   porPunto,
   porVendedor,
-  totalDelDia,
   totalPiezas,
   traspasosDeFecha,
   turnoActual,
   turnosDeFecha,
-  ultimaVentaActiva,
   ventasActivas,
   ventasDeFecha,
 } from './dominio';
@@ -249,10 +247,6 @@ export type PropsVender = {
   ajustes: Settings;
   hoy: string;
   ahora: Date;
-  alVender: (punto: string, qty: number) => void;
-  alRestar: (punto: string) => void;
-  alMarcarLugar: (punto: string) => void;
-  alCorregirLugar: () => void;
   alAbrirMayoreo: () => void;
   alAbrirCarga: () => void;
   alIrA: (v: Vista) => void;
@@ -304,88 +298,22 @@ function barraEstado(p: PropsVender): HTMLElement {
   // "⋯" va aqui, en el mismo extremo derecho que en las otras tres pantallas.
   return el('div', { clase: 'barra-estado' }, [
     el('div', { clase: 'barra-datos' }, [
-      el('span', { clase: 'barra-dato' }, [
-        el('span', { clase: 'detalle', texto: 'Hielera ' }),
+      el('span', { clase: 'barra-dato barra-dato-principal' }, [
+        el('span', { clase: 'detalle', texto: 'Hielera' }),
         cifraHielera,
       ]),
       el('span', { clase: 'barra-dato' }, [
-        el('span', { clase: 'detalle', texto: 'Hoy ' }),
+        el('span', { clase: 'detalle', texto: 'Hoy' }),
         el('span', { clase: 'barra-cifra num', texto: String(vendidoHoy) }),
       ]),
       litrosHoy === 0
         ? null
         : el('span', { clase: 'barra-dato' }, [
-            el('span', { clase: 'detalle', texto: 'Litros ' }),
+            el('span', { clase: 'detalle', texto: 'Litros' }),
             el('span', { clase: 'barra-cifra num', texto: String(litrosHoy) }),
           ]),
     ]),
     botonMenu(p.alIrA),
-  ]);
-}
-
-/**
- * Sin lugar marcado no hay a que acreditar la venta, asi que la pantalla no ofrece el boton
- * grande todavia: primero se dice donde se esta parado. Un toque, y ya se puede vender.
- */
-function tarjetaSinLugar(p: PropsVender): HTMLElement {
-  return el('section', { clase: 'turno turno-vacio' }, [
-    el('h2', { texto: '¿Dónde están?' }),
-    el('p', {
-      clase: 'detalle',
-      texto: 'Marca el lugar una vez: abre el turno y ahí se acredita todo.',
-    }),
-    el(
-      'div',
-      { clase: 'lugares' },
-      p.ajustes.points.map((punto) => boton(punto, 'btn-lugar', () => p.alMarcarLugar(punto)))
-    ),
-  ]);
-}
-
-/** Donde esta parado el vendedor y desde que hora: el encabezado del turno en curso. */
-function tarjetaTurno(p: PropsVender, turno: Turno): HTMLElement {
-  const pie = [`desde ${horaMinuto(turno.inicio)}`, duracionLegible(turno.minutos)];
-  if (turno.piezas > 0) pie.push(`${turno.piezas} piezas`);
-
-  return el('section', { clase: 'turno' }, [
-    el('div', { clase: 'turno-cabeza' }, [
-      el('div', {}, [
-        el('span', { clase: 'detalle', texto: 'Aquí' }),
-        el('h2', { clase: 'turno-lugar', texto: turno.punto }),
-      ]),
-      boton('Cambiar', 'btn-texto', () =>
-        abrirLugar(p.ajustes.points, turno.punto, p.alMarcarLugar)
-      ),
-    ]),
-    el('p', { clase: 'detalle num turno-pie', texto: pie.join(' · ') }),
-  ]);
-}
-
-/** Los botones que registran. Todos van al lugar del turno: nadie elige punto al vender. */
-function bloqueVenta(p: PropsVender, punto: string): HTMLElement {
-  const mayoreo = totalDelDia(p.eventos, p.hoy, punto, 'mayoreo');
-
-  const botonPrincipal = boton('+1', 'btn-venta', () => p.alVender(punto, 1));
-  botonPrincipal.setAttribute('aria-label', `Registrar una venta en ${punto}`);
-
-  const hayQueAnular = ultimaVentaActiva(p.eventos, punto, p.hoy, VENDEDOR_ACTIVO) !== null;
-  const botonRestar = boton('−1', 'btn-chico peligro', () => p.alRestar(punto));
-  botonRestar.disabled = !hayQueAnular;
-  botonRestar.setAttribute('aria-label', `Anular la última venta en ${punto}`);
-
-  return el('section', { clase: 'punto' }, [
-    botonPrincipal,
-    el('div', { clase: 'fila-chica' }, [
-      boton('+2', 'btn-chico acento', () => p.alVender(punto, 2)),
-      boton('+3', 'btn-chico acento', () => p.alVender(punto, 3)),
-      botonRestar,
-    ]),
-    // Se toca en caliente, en la calle: el error de lugar se nota justo despues de registrar,
-    // y mandarlo hasta la pestana Hoy a buscar el renglon garantiza que no se corrija nunca.
-    el('div', { clase: 'punto-correccion' }, [
-      boton('Estábamos en otro lugar', 'btn-texto', p.alCorregirLugar),
-    ]),
-    mayoreo > 0 ? el('p', { clase: 'detalle num punto-pie', texto: `mayoreo hoy ${mayoreo}` }) : null,
   ]);
 }
 
@@ -400,10 +328,6 @@ function resumenDeHoy(p: PropsVender): HTMLElement | null {
 
 export function vistaVender(p: PropsVender): HTMLElement {
   const marcado = turnoActual(p.eventos, VENDEDOR_ACTIVO, p.hoy);
-  const turno =
-    marcado === null
-      ? null
-      : jornada(p.eventos, p.hoy, p.ahora).turnos.find((t) => t.id === marcado.id) ?? null;
 
   return el('div', { clase: 'pantalla-vender' }, [
     el('h1', { clase: 'solo-lectores', texto: 'Vender' }),
@@ -419,11 +343,6 @@ export function vistaVender(p: PropsVender): HTMLElement {
       alAbrirMayoreo: p.alAbrirMayoreo,
     }),
     resumenDeHoy(p),
-    el('div', { clase: 'separador' }),
-    // El conteo en vivo sigue disponible para el rato que se quiera contar botella por botella.
-    el('p', { clase: 'detalle', texto: '¿Contar en vivo?' }),
-    turno === null ? tarjetaSinLugar(p) : tarjetaTurno(p, turno),
-    turno === null ? null : bloqueVenta(p, turno.punto),
   ]);
 }
 
@@ -475,21 +394,6 @@ function abrirSelectorLugar(p: PropsSelectorLugar): void {
   document.body.appendChild(modal);
   modal.addEventListener('cancel', () => modal.remove());
   modal.showModal();
-}
-
-/** Cambiar de lugar es marcar uno nuevo: el turno anterior se cierra solo a esa hora. */
-function abrirLugar(
-  puntos: readonly string[],
-  actual: string | null,
-  alConfirmar: (punto: string) => void
-): void {
-  abrirSelectorLugar({
-    titulo: 'Cambiar de lugar',
-    texto: 'Desde este momento las ventas se acreditan al lugar nuevo.',
-    puntos,
-    actual,
-    alConfirmar,
-  });
 }
 
 /** Corregir una venta suelta que se fue al lugar equivocado. No cambia el turno ni el dinero. */

@@ -129,13 +129,13 @@ export function bloqueConteo(p: PropsConteo): HTMLElement {
   for (const f of filas) f.control.addEventListener('input', refrescar);
   refrescar();
 
-  const donde = el('div', { clase: 'corte-precios conteo-donde' }, [
+  const donde = el('div', { clase: 'conteo-donde' }, [
     campo('Lugar', lugar),
     campo('Desde las', hora),
   ]);
   const formulario = el(
     'form',
-    { clase: 'conteo-form', attrs: { 'aria-label': 'Conteo de la hielera' } },
+    { clase: 'conteo-form tarjeta', attrs: { 'aria-label': 'Conteo de la hielera' } },
     [...filas.map((f) => f.nodo), donde, registrar]
   );
   formulario.addEventListener('submit', (evento) => {
@@ -148,8 +148,8 @@ export function bloqueConteo(p: PropsConteo): HTMLElement {
   return el('section', { clase: 'bloque conteo-bloque' }, [
     formulario,
     el('div', { clase: 'acciones-secundarias' }, [
-      boton('Cargar hielera', 'btn-texto', () => p.alAbrirCarga()),
-      boton('Mayoreo', 'btn-texto', () => p.alAbrirMayoreo()),
+      boton('Cargar hielera', 'btn btn-accion', () => p.alAbrirCarga()),
+      boton('Mayoreo', 'btn btn-accion', () => p.alAbrirMayoreo()),
     ]),
   ]);
 }
