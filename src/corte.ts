@@ -1,5 +1,12 @@
 import type { AppEvent } from './tipos';
-import { LARGO_MAXIMO_TEXTO, claveFecha, fechaLegible, totalPiezas, ventasActivas } from './dominio';
+import {
+  LARGO_MAXIMO_TEXTO,
+  claveFecha,
+  fechaLegible,
+  filtrarProducto,
+  totalPiezas,
+  ventasActivas,
+} from './dominio';
 
 /**
  * Corte de caja del dia. Solo LEE los eventos del registro de ventas: nunca los modifica,
@@ -14,6 +21,8 @@ import { LARGO_MAXIMO_TEXTO, claveFecha, fechaLegible, totalPiezas, ventasActiva
 /** Precios de fabrica. Se pueden cambiar en la vista Corte y quedan congelados en cada cierre. */
 export const PRECIO_CALLE = 2000;
 export const PRECIO_MAYOREO = 1400;
+/** El litro solo se vende en la calle: no tiene precio de mayoreo. */
+export const PRECIO_LITRO = 3500;
 
 /**
  * Fondos rotatorios de la caja, en centavos. NO son gastos ni se restan del reparto:
@@ -36,6 +45,8 @@ export type Precios = {
   calle: number;
   /** Centavos por pieza vendida a mayoreo. */
   mayoreo: number;
+  /** Centavos por litro vendido en la calle. */
+  litro: number;
 };
 
 export type LineaGasto = {
@@ -53,7 +64,7 @@ export type LineaGasto = {
  *
  * El gas de Mama Juani NO se aparta: se le paga cada dos lotes con el efectivo de la venta de
  * ese dia, asi que entra como un gasto mas el dia que se le paga. Apartarlo Y capturarlo como
- * gasto lo cobraria dos veces —una al apartar, otra al pagar—, y quien lo paga son los dos.
+ * gasto lo cobraria dos veces —una al apartar, otra al pagar—.
  *
  * Cero = hoy no se aparto nada. No se pinta linea ni se escribe movimiento.
  */
@@ -88,6 +99,8 @@ export type IngresoCanal = {
 export type Ingreso = {
   calle: IngresoCanal;
   mayoreo: IngresoCanal;
+  /** Litros vendidos en la calle. calle y mayoreo cuentan solo botellas. */
+  litro: IngresoCanal;
   total: number;
 };
 
@@ -103,15 +116,20 @@ export type Reparto = {
   utilidad: number;
   /**
    * Lo que se aparto el dia —gasolina y gas— y se guarda en la caja al cerrar. Se resta
-   * despues de la utilidad y antes de partir a la mitad, asi que lo pagan los dos.
+   * despues de la utilidad y antes de lo que se lleva Fran.
    *
    * Es lo que Fran capturo en el corte de ese dia; los cortes cerrados cuando salia de una
    * tarifa fija traen lo que aquella tarifa aparto, y el pasado no se recalcula.
    */
   apartado: number;
-  /** utilidad - apartado: lo que de verdad se parte entre los dos. */
+  /** utilidad - apartado: lo que de verdad se lleva Fran. */
   repartible: number;
+  /** Igual a `repartible` en los cortes nuevos. */
   fran: number;
+  /**
+   * 0 en los cortes nuevos: Fran es el unico dueño. Los cortes cerrados cuando eran dos socios
+   * a mitad guardan aqui la mitad de Primo y se leen tal cual.
+   */
   primo: number;
 };
 
@@ -153,7 +171,11 @@ export type CorteCerrado = {
   reparto: Reparto;
 };
 
-export const PRECIOS_INICIALES: Precios = { calle: PRECIO_CALLE, mayoreo: PRECIO_MAYOREO };
+export const PRECIOS_INICIALES: Precios = {
+  calle: PRECIO_CALLE,
+  mayoreo: PRECIO_MAYOREO,
+  litro: PRECIO_LITRO,
+};
 
 export function borradorVacio(fecha: string): Borrador {
   return { fecha, gastos: [], apartado: { ...APARTADO_VACIO } };
@@ -207,15 +229,19 @@ export function ingresoDeFecha(
   precios: Precios
 ): Ingreso {
   const delDia = ventasActivas(eventos).filter((v) => claveFecha(v.ts) === fecha);
-  const piezasCalle = totalPiezas(delDia.filter((v) => v.channel === 'calle'));
-  const piezasMayoreo = totalPiezas(delDia.filter((v) => v.channel === 'mayoreo'));
+  const botellas = filtrarProducto(delDia, 'botella');
+  const litros = filtrarProducto(delDia, 'litro');
+  const piezasCalle = totalPiezas(botellas.filter((v) => v.channel === 'calle'));
+  const piezasMayoreo = totalPiezas(botellas.filter((v) => v.channel === 'mayoreo'));
+  const piezasLitro = totalPiezas(litros.filter((v) => v.channel === 'calle'));
 
   const calle: IngresoCanal = { piezas: piezasCalle, centavos: piezasCalle * precios.calle };
   const mayoreo: IngresoCanal = {
     piezas: piezasMayoreo,
     centavos: piezasMayoreo * precios.mayoreo,
   };
-  return { calle, mayoreo, total: calle.centavos + mayoreo.centavos };
+  const litro: IngresoCanal = { piezas: piezasLitro, centavos: piezasLitro * precios.litro };
+  return { calle, mayoreo, litro, total: calle.centavos + mayoreo.centavos + litro.centavos };
 }
 
 // ---------- aritmetica del corte ----------
@@ -233,8 +259,8 @@ function sumar(lineas: readonly { centavos: number }[]): number {
  * dos veces —el error que ya se habia corregido con el fondo y el cambio, escondido en otra
  * linea—. La tesoreria de la caja vive completa en caja.ts y no toca este numero.
  *
- * El reparto es mitad y mitad. El centavo impar se lo queda Fran, que es quien trae la caja:
- * en una utilidad positiva le toca de mas y en una negativa absorbe de mas, siempre igual.
+ * Fran es el unico vendedor: todo lo repartible es suyo y `primo` queda en 0. El campo se
+ * conserva porque los cortes cerrados antes de este cambio guardan su mitad y se leen igual.
  */
 export function calcularReparto(
   ingreso: number,
@@ -246,7 +272,6 @@ export function calcularReparto(
   const totalAjustes = sumar(ajustes);
   const utilidad = ingreso - totalGastos + totalAjustes;
   const repartible = utilidad - apartado;
-  const primo = Math.trunc(repartible / 2);
 
   return {
     ingreso,
@@ -256,8 +281,8 @@ export function calcularReparto(
     utilidad,
     apartado,
     repartible,
-    fran: repartible - primo,
-    primo,
+    fran: repartible,
+    primo: 0,
   };
 }
 
@@ -293,7 +318,7 @@ export function cerrarCorte(entrada: {
   precios: Precios;
   device: string;
   cerradoEn: string;
-  /** Lo que se aparto para gasolina y gas. Se resta antes de partir a la mitad. */
+  /** Lo que se aparto para gasolina y gas. Se resta antes de lo que se lleva Fran. */
   apartado?: number;
   /** Como quedo la caja despues de aplicar los movimientos del cierre. */
   caja?: CajaAlCerrar;
@@ -307,6 +332,7 @@ export function cerrarCorte(entrada: {
     ingreso: {
       calle: { ...entrada.ingreso.calle },
       mayoreo: { ...entrada.ingreso.mayoreo },
+      litro: { ...entrada.ingreso.litro },
       total: entrada.ingreso.total,
     },
     gastos: entrada.borrador.gastos.map((g) => ({ ...g })),
@@ -411,10 +437,11 @@ function validarLineas(valor: unknown, minimo: number): LineaGasto[] {
 
 export function validarPrecios(valor: unknown): Precios {
   if (typeof valor !== 'object' || valor === null) return { ...PRECIOS_INICIALES };
-  const { calle, mayoreo } = valor as Record<string, unknown>;
+  const { calle, mayoreo, litro } = valor as Record<string, unknown>;
   return {
     calle: centavosValidos(calle, 1) ? calle : PRECIO_CALLE,
     mayoreo: centavosValidos(mayoreo, 1) ? mayoreo : PRECIO_MAYOREO,
+    litro: centavosValidos(litro, 1) ? litro : PRECIO_LITRO,
   };
 }
 
@@ -497,10 +524,19 @@ export function validarCorte(valor: unknown): CorteCerrado | null {
 
   const ingresoBruto = campos['ingreso'];
   if (typeof ingresoBruto !== 'object' || ingresoBruto === null) return null;
-  const { calle, mayoreo, total } = ingresoBruto as Record<string, unknown>;
+  const { calle, mayoreo, litro, total } = ingresoBruto as Record<string, unknown>;
   const canalCalle = validarCanal(calle);
   const canalMayoreo = validarCanal(mayoreo);
-  if (canalCalle === null || canalMayoreo === null || !centavosValidos(total, 0)) return null;
+  // Los cortes cerrados antes del litro no traen la linea: se leen en cero, su total no cambia.
+  const canalLitro = litro === undefined ? { piezas: 0, centavos: 0 } : validarCanal(litro);
+  if (
+    canalCalle === null ||
+    canalMayoreo === null ||
+    canalLitro === null ||
+    !centavosValidos(total, 0)
+  ) {
+    return null;
+  }
 
   const reparto = validarReparto(campos['reparto']);
   if (reparto === null) return null;
@@ -520,7 +556,7 @@ export function validarCorte(valor: unknown): CorteCerrado | null {
     cerradoEn: campos['cerradoEn'],
     device: campos['device'],
     precios: validarPrecios(campos['precios']),
-    ingreso: { calle: canalCalle, mayoreo: canalMayoreo, total },
+    ingreso: { calle: canalCalle, mayoreo: canalMayoreo, litro: canalLitro, total },
     gastos: validarLineas(campos['gastos'], 1),
     reponerCaja: centavosValidos(campos['reponerCaja'], 0) ? campos['reponerCaja'] : 0,
     ajustes: validarLineas(campos['ajustes'], -MONTO_MAXIMO),
@@ -550,6 +586,11 @@ export function resumenCorte(corte: CorteCerrado): string {
       `Mayoreo: ${ingreso.mayoreo.piezas} × ${importe(precios.mayoreo)} = ${importe(ingreso.mayoreo.centavos)}`
     );
   }
+  if (ingreso.litro.piezas > 0) {
+    lineas.push(
+      `Litros: ${ingreso.litro.piezas} × ${importe(precios.litro)} = ${importe(ingreso.litro.centavos)}`
+    );
+  }
   lineas.push(`Ingreso: ${importe(ingreso.total)}`, '');
 
   lineas.push(`Gastos: ${importe(reparto.gastos)}`);
@@ -562,10 +603,16 @@ export function resumenCorte(corte: CorteCerrado): string {
   if (reparto.apartado > 0) {
     // Sin decir para que: hoy es la gasolina, y los cortes viejos traen gasolina y gas juntos.
     lineas.push(`Se apartó: ${importe(reparto.apartado)}`);
-    lineas.push(`Se reparte: ${importe(reparto.repartible)}`);
+    // Con un solo dueño "Se reparte" repetiria la cifra de "Tu utilidad" justo abajo.
+    if (reparto.primo !== 0) lineas.push(`Se reparte: ${importe(reparto.repartible)}`);
   }
-  lineas.push(`Fran: ${importe(reparto.fran)}`);
-  lineas.push(`Primo: ${importe(reparto.primo)}`);
+  // Los cortes viejos traen su mitad de Primo y se siguen leyendo igual; los nuevos no.
+  if (reparto.primo !== 0) {
+    lineas.push(`Fran: ${importe(reparto.fran)}`);
+    lineas.push(`Primo: ${importe(reparto.primo)}`);
+  } else {
+    lineas.push(`Tu utilidad: ${importe(reparto.fran)}`);
+  }
   lineas.push('');
 
   if (corte.caja === null) {

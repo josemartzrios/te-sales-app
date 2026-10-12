@@ -6,7 +6,7 @@ import { LARGO_MAXIMO_TEXTO, fechaLegible } from './dominio';
  * La caja por dentro. El corte responde "cuanto ganamos"; este modulo responde "donde esta
  * el dinero y a quien le pertenece". Son dos libros distintos a proposito:
  *
- *   - Resultado  (corte.ts): ingreso - gastos = utilidad, mitad y mitad. Un gasto se cuenta
+ *   - Resultado  (corte.ts): ingreso - gastos = utilidad, todo de Fran. Un gasto se cuenta
  *     el dia que se paga, sin importar de que sobre salio el efectivo.
  *   - Tesoreria  (aqui):     de los pesos que hay en la caja, cuales ya tienen dueño.
  *
@@ -44,15 +44,20 @@ export const NOMBRE_SOBRE: Record<Sobre, string> = {
   primo: 'Sueldo de Primo',
 };
 
-/** Los dos socios. Su sobre acumula lo que les toca y de ahi lo sacan cuando cobran. */
+/**
+ * Los sobres que se cobran: acumulan lo de su dueño y de ahi se saca cuando cobra. Hoy solo el
+ * de Fran se llena al cerrar; el de Primo sigue aqui porque los cortes viejos le abonaron su
+ * mitad, y mientras ese saldo exista tiene que poder cobrarse (la UI lo usa para `cobrable`).
+ */
 export const SOBRES_SOCIOS: readonly Sobre[] = ['fran', 'primo'];
 
 /**
  * Con cuanto arranca cada sobre antes de cualquier movimiento.
  *
  * Fondo y cambio son rotatorios: su objetivo es fijo y no crece, solo se repone cuando alguien
- * saca de ahi. Los otros cuatro arrancan en cero y se llenan al cerrar el corte: gasolina y gas
- * con lo que se haya apartado ese dia, los de los socios con su mitad.
+ * saca de ahi. Los otros cuatro arrancan en cero: gasolina y gas se llenan con lo apartado, el
+ * de Fran con lo que le toca al cerrar cada corte. El de Primo solo trae lo que le abonaron los
+ * cortes de cuando eran dos socios a mitad.
  */
 export const BASE_SOBRE: Record<Sobre, number> = {
   fondo: FONDO_GASTO,
@@ -142,7 +147,7 @@ export function movimientoDeCobro(entrada: {
  * entra y salda. Nunca cambia lo que un sobre deberia traer.
  *
  * Esa columna solo la mueven los dos cierres, que son los que conocen la regla:
- *   - el corte del dia aparta   (sube el objetivo de gasolina, gas y Primo)
+ *   - el corte del dia aparta   (sube el objetivo de gasolina y de lo de Fran)
  *   - el cierre del domingo paga (lo baja al vaciarlos)
  *
  * Asi "saque 18 de la gasolina para las botellas" queda como deuda —que es lo que es— sin
@@ -309,6 +314,17 @@ export function estadoCaja(movimientos: readonly MovimientoCaja[]): EstadoCaja {
   };
 }
 
+/**
+ * Los sobres que se pintan: todos salvo el de Primo cuando ya no tiene nada. Con saldo pendiente
+ * (a favor o en contra) se queda a la vista hasta que se cobre o se salde, y tambien si su saldo
+ * se presto entero: ahi no hay efectivo pero se le debe, y hay que poder devolverselo.
+ */
+export function sobresVisibles(estado: EstadoCaja): readonly Sobre[] {
+  const primo = estado.sobres.find((x) => x.sobre === 'primo');
+  const conAlgo = primo !== undefined && (primo.hay !== 0 || primo.objetivo !== 0);
+  return SOBRES.filter((s) => s !== 'primo' || conAlgo);
+}
+
 /** Los sobres que traen deuda, del que mas debe al que menos. Vacio = la caja esta completa. */
 export function sobresEnDeuda(estado: EstadoCaja): SaldoSobre[] {
   return estado.sobres.filter((s) => s.deuda > 0).sort((a, b) => b.deuda - a.deuda);
@@ -325,9 +341,9 @@ export type PlanCaja = {
   /** Lo que se aparta hoy. Vacio si no se capturo nada. */
   apartados: { sobre: keyof Apartado; centavos: number }[];
   totalApartado: number;
-  /** Lo que queda para los socios despues de apartar. Negativo en un dia malo. */
+  /** Lo que queda despues de apartar, todo para Fran. Negativo en un dia malo. */
   repartible: number;
-  /** La mitad de cada quien. El centavo impar se lo queda Fran, que trae la caja. */
+  /** Todo lo repartible es de Fran. `primo` queda en 0: se conserva por los cortes viejos. */
   fran: number;
   primo: number;
   /** Lo que se le debe a la caja. Informativo: no se cobra aqui, ver abajo. */
@@ -337,32 +353,31 @@ export type PlanCaja = {
 };
 
 /**
- * Se paga todo y se reparte lo que queda. En ese orden, que es como se opera con la mano:
+ * Se paga todo y lo que queda es de Fran. En ese orden, que es como se opera con la mano:
  *
  *   1. la utilidad ya trae restados los gastos del dia (el corte la calculo, y ahi va el gas de
  *      Mama Juani los dias que se le paga)
  *   2. de ahi se aparta la gasolina que Fran capturo en el corte
- *   3. lo que sobra se parte a la mitad, y cada mitad se va al sobre de su dueño
+ *   3. lo que sobra es el repartible, y va completo al sobre de Fran
  *
  * El apartado es exactamente lo tecleado: no hay tarifa por dia de venta ni tope contra la
  * utilidad. Recortarlo en silencio porque "no alcanzo" haria que la caja dijera una cosa y el
- * bulto otra; si un dia se aparta mas de lo que se gano, el repartible sale negativo y eso lo
- * absorben los dos, igual que cualquier mal dia.
+ * bulto otra; si un dia se aparta mas de lo que se gano, el repartible sale negativo y lo
+ * absorbe el sobre de Fran, igual que cualquier mal dia.
  *
- * El apartado sale ANTES de repartir, o sea que lo pagan los dos. Antes salia solo del lado de
- * Fran —Primo cobraba su mitad completa y Fran financiaba la gasolina— y eso no es mitad y
- * mitad. Un dia de 360 con 154 de te daba 0 para Fran y 103 para Primo; ahora da 60.50 y 60.50.
+ * Historia: cuando Fran y Primo eran socios a mitad, el repartible se partia en dos y cada
+ * mitad iba a su sobre. Los cortes cerrados entonces guardan esa mitad de Primo y su sobre puede
+ * traer saldo todavia; nada de eso se recalcula. Hoy `primo` siempre sale 0.
  *
- * La deuda NO se cobra aqui, y esa es la otra correccion. Sacar 154 del fondo para comprar el
- * te y capturar el gasto de 154 es el MISMO peso: el gasto ya bajo la utilidad de los dos, y el
- * fondo se rellena solo con el efectivo que la caja retiene. Restar ademas una linea de
- * "reponer" cobraba el gasto una segunda vez, y completa, a Fran. Se asume que todo prestamo
- * termina en un gasto capturado, que es como se opera: los gastos se cubren con el fondo.
+ * La deuda NO se cobra aqui. Sacar 154 del fondo para comprar el te y capturar el gasto de 154
+ * es el MISMO peso: el gasto ya bajo la utilidad, y el fondo se rellena solo con el efectivo
+ * que la caja retiene. Restar ademas una linea de "reponer" cobraria el gasto una segunda vez.
+ * Se asume que todo prestamo termina en un gasto capturado, que es como se opera: los gastos
+ * se cubren con el fondo.
  *
- * En un dia malo el repartible es negativo y los dos sobres bajan. Nadie pone dinero de su
- * bolsa: el faltante se queda registrado en el sobre de cada quien y se cobra solo el dia que
- * vuelve a haber utilidad. Por eso Fran necesita sobre igual que Primo — sin el, su parte del
- * mal dia se evaporaba y terminaba absorbiendola completa.
+ * En un dia malo el repartible es negativo y el sobre de Fran baja. Nadie pone dinero de su
+ * bolsa: el faltante se queda registrado en el sobre y se compensa solo el dia que vuelve a
+ * haber utilidad.
  */
 export function planCaja(entrada: {
   utilidad: number;
@@ -380,22 +395,20 @@ export function planCaja(entrada: {
   const totalApartado = apartados.reduce((t, a) => t + a.centavos, 0);
 
   const repartible = entrada.utilidad - totalApartado;
-  const primo = Math.trunc(repartible / 2);
-  const fran = repartible - primo;
 
   return {
     apartados,
     totalApartado,
     repartible,
-    fran,
-    primo,
+    fran: repartible,
+    primo: 0,
     deuda: entrada.deuda,
-    seQuedaEnCaja: totalApartado + primo,
+    seQuedaEnCaja: totalApartado,
   };
 }
 
 /**
- * Los movimientos que genera cerrar un corte: el apartado del dia y la mitad de cada socio.
+ * Los movimientos que genera cerrar un corte: el apartado del dia y lo de Fran.
  *
  * Los ids se derivan de la fecha del corte, no del reloj: cerrar dos veces la misma fecha
  * —que la app ya no permite, pero aqui no se confia en eso— no puede apartar el doble.
@@ -423,18 +436,16 @@ export function movimientosDeCierre(entrada: {
     });
   }
 
-  // Un repartible negativo le baja el acumulado a los dos: el mal dia tambien es de los dos.
-  // Ese es justo el registro que faltaba cuando Fran no tenia sobre.
-  for (const sobre of SOBRES_SOCIOS) {
-    const centavos = sobre === 'fran' ? entrada.plan.fran : entrada.plan.primo;
-    if (centavos === 0) continue;
+  // Un repartible negativo le baja el acumulado a Fran: el mal dia tambien es suyo. Primo ya no
+  // recibe movimientos de cierre; su sobre solo existe para saldos de cortes anteriores.
+  if (entrada.plan.fran !== 0) {
     movimientos.push({
       ...base,
-      id: `caja-${entrada.fecha}-${sobre}`,
+      id: `caja-${entrada.fecha}-fran`,
       tipo: 'apartado',
-      sobre,
-      centavos,
-      concepto: `Mitad del ${fechaLegible(entrada.fecha)}`,
+      sobre: 'fran',
+      centavos: entrada.plan.fran,
+      concepto: `Del ${fechaLegible(entrada.fecha)}`,
     });
   }
 
@@ -482,7 +493,7 @@ function prefijoDeGasto(gastoId: string): string {
 
 /**
  * Los movimientos que escribe capturar un gasto en el corte, con el efectivo saliendo del sobre
- * que se eligio. Siempre como prestamo: el gasto ya bajo la utilidad de los dos y la caja se
+ * que se eligio. Siempre como prestamo: el gasto ya bajo la utilidad y la caja se
  * rellena sola con el efectivo que retiene al cerrar, asi que lo que salio del sobre hay que
  * reponerlo.
  *
@@ -634,8 +645,9 @@ export function movimientoDeArqueo(entrada: {
  * botellas de 218, esos 200 ya bajaron el saldo de la caja Y ademas van dentro del gasto de
  * 218, asi que se restarian dos veces y el bulto pareceria tener 200 de menos.
  *
- * La unica salida que si hay que restar aparte es el sueldo de Primo: su mitad ya salio de la
- * utilidad el dia que se gano, asi que pagarsela mueve efectivo sin volver a costar. La
+ * Las unicas salidas que si hay que restar aparte son los cobros de los sobres de socios: lo
+ * tuyo cuando lo cobras, y el saldo viejo de Primo. Ese dinero ya salio de la utilidad el dia
+ * que se gano, asi que cobrarlo mueve efectivo sin volver a costar. La
  * gasolina y el gas no entran aqui: cuando se pagan desde el corte llevan detras su linea de
  * gasto, que ya bajo la utilidad.
  *
@@ -646,10 +658,10 @@ export function cajaParaEsperado(
   fecha: string
 ): number {
   const alAbrir = estadoCaja(movimientos.filter((m) => m.fecha < fecha)).hay;
-  const sueldoPagadoHoy = movimientos
-    .filter((m) => m.fecha === fecha && m.tipo === 'pago' && m.sobre === 'primo')
+  const cobradoHoy = movimientos
+    .filter((m) => m.fecha === fecha && m.tipo === 'pago' && SOBRES_SOCIOS.includes(m.sobre))
     .reduce((total, m) => total + m.centavos, 0);
-  return alAbrir + sueldoPagadoHoy;
+  return alAbrir + cobradoHoy;
 }
 
 // ---------- validacion defensiva de lo guardado ----------
@@ -700,7 +712,8 @@ export function validarMovimiento(valor: unknown): MovimientoCaja | null {
 /** Texto plano para pegar en WhatsApp, con el mismo criterio que el resumen del corte. */
 export function resumenCaja(estado: EstadoCaja): string {
   const lineas: string[] = ['Caja', ''];
-  for (const s of estado.sobres) {
+  const visibles = sobresVisibles(estado);
+  for (const s of estado.sobres.filter((x) => visibles.includes(x.sobre))) {
     const falta = s.deuda > 0 ? ` (faltan ${importe(s.deuda)})` : '';
     lineas.push(`${NOMBRE_SOBRE[s.sobre]}: ${importe(s.hay)} de ${pesos(s.objetivo)}${falta}`);
   }

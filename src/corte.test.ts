@@ -182,10 +182,10 @@ describe('el dia real: un lote de 18 a la calle', () => {
     expect(importe(reparto.gastos)).toBe('$85.00');
   });
 
-  it('deja 275 de utilidad y 137.50 para cada quien', () => {
+  it('deja 275 de utilidad y todo es de Fran', () => {
     expect(importe(reparto.utilidad)).toBe('$275.00');
-    expect(importe(reparto.fran)).toBe('$137.50');
-    expect(importe(reparto.primo)).toBe('$137.50');
+    expect(importe(reparto.fran)).toBe('$275.00');
+    expect(importe(reparto.primo)).toBe('$0.00');
   });
 
   it('no descuenta los fondos: el reparto sale completo', () => {
@@ -219,8 +219,8 @@ describe('dos lotes de 18 con algo de mayoreo', () => {
     expect(importe(ingreso.total)).toBe('$684.00'); // 30×20 + 6×14
     expect(importe(reparto.gastos)).toBe('$235.00');
     expect(importe(reparto.utilidad)).toBe('$449.00');
-    expect(importe(reparto.fran)).toBe('$224.50');
-    expect(importe(reparto.primo)).toBe('$224.50');
+    expect(importe(reparto.fran)).toBe('$449.00');
+    expect(importe(reparto.primo)).toBe('$0.00');
   });
 });
 
@@ -228,7 +228,7 @@ describe('dos lotes de 18 con algo de mayoreo', () => {
 
 describe('calcularReparto con apartado', () => {
   /** El dia de Fran: 360 de ingreso, 154 de te, 85 de gasolina y gas. */
-  it('el apartado se resta antes de partir a la mitad', () => {
+  it('el apartado se resta antes de repartir', () => {
     const reparto = calcularReparto(
       36000,
       [{ id: 'g', concepto: 'Te', centavos: 15400 }],
@@ -238,8 +238,14 @@ describe('calcularReparto con apartado', () => {
     expect(importe(reparto.utilidad)).toBe('$206.00');
     expect(importe(reparto.apartado)).toBe('$85.00');
     expect(importe(reparto.repartible)).toBe('$121.00');
-    expect(importe(reparto.fran)).toBe('$60.50');
-    expect(importe(reparto.primo)).toBe('$60.50');
+    expect(importe(reparto.fran)).toBe('$121.00');
+    expect(importe(reparto.primo)).toBe('$0.00');
+  });
+
+  it('calcularReparto da todo a fran', () => {
+    const reparto = calcularReparto(36000, [], [], 8500);
+    expect(reparto.fran).toBe(27500);
+    expect(reparto.primo).toBe(0);
   });
 
   it('sin apartado, repartible y utilidad son el mismo numero', () => {
@@ -249,46 +255,44 @@ describe('calcularReparto con apartado', () => {
     expect(reparto.fran + reparto.primo).toBe(reparto.utilidad);
   });
 
-  it('las dos mitades siempre suman lo repartible, no la utilidad', () => {
+  it('fran siempre es lo repartible, no la utilidad', () => {
     const reparto = calcularReparto(36000, [], [], 8500);
     expect(reparto.fran + reparto.primo).toBe(reparto.repartible);
     expect(reparto.fran + reparto.primo).not.toBe(reparto.utilidad);
   });
 
-  it('el centavo impar se lo queda Fran, que trae la caja', () => {
+  it('un centavo impar tambien es completo de Fran', () => {
     const reparto = calcularReparto(101, [], [], 0);
-    expect(reparto.fran).toBe(51);
-    expect(reparto.primo).toBe(50);
+    expect(reparto.fran).toBe(101);
+    expect(reparto.primo).toBe(0);
   });
 });
 
 describe('calcularReparto', () => {
-  it('parte mitad y mitad cuando la utilidad es par en centavos', () => {
+  it('fran se lleva toda la utilidad, sin partir', () => {
     const reparto = calcularReparto(36000, [MAMA_JUANI, GASOLINA]);
-    expect(reparto.fran).toBe(13750);
-    expect(reparto.primo).toBe(13750);
+    expect(reparto.fran).toBe(27500);
+    expect(reparto.primo).toBe(0);
   });
 
-  it('el centavo impar se lo queda Fran, que trae la caja', () => {
+  it('un centavo impar no se parte: es completo de Fran', () => {
     const reparto = calcularReparto(27501, []);
-    expect(reparto.fran).toBe(13751);
-    expect(reparto.primo).toBe(13750);
-    expect(reparto.fran + reparto.primo).toBe(27501);
+    expect(reparto.fran).toBe(27501);
+    expect(reparto.primo).toBe(0);
   });
 
-  it('en perdida Fran tambien absorbe el centavo impar: la regla no cambia de signo', () => {
+  it('en perdida Fran absorbe todo, centavo impar incluido', () => {
     const reparto = calcularReparto(0, [gasto('g', 'Insumos', 4501)]);
     expect(reparto.utilidad).toBe(-4501);
-    expect(reparto.fran).toBe(-2251);
-    expect(reparto.primo).toBe(-2250);
-    expect(reparto.fran + reparto.primo).toBe(-4501);
+    expect(reparto.fran).toBe(-4501);
+    expect(reparto.primo).toBe(0);
   });
 
-  it('reparte la perdida: un dia malo se reparte igual que uno bueno', () => {
+  it('un dia malo baja solo a Fran', () => {
     const reparto = calcularReparto(4000, [MAMA_JUANI, GASOLINA]);
     expect(importe(reparto.utilidad)).toBe('$-45.00');
-    expect(importe(reparto.fran)).toBe('$-22.50');
-    expect(importe(reparto.primo)).toBe('$-22.50');
+    expect(importe(reparto.fran)).toBe('$-45.00');
+    expect(importe(reparto.primo)).toBe('$0.00');
   });
 
   /**
@@ -307,8 +311,8 @@ describe('calcularReparto', () => {
 
     // Los dos dias juntos: 600 de venta menos 245 de insumos. Ni un peso mas.
     expect(dia1.utilidad + dia2.utilidad).toBe(60000 - 24500);
-    expect(dia1.fran + dia2.fran).toBe(17750);
-    expect(dia1.primo + dia2.primo).toBe(17750);
+    expect(dia1.fran + dia2.fran).toBe(35500);
+    expect(dia1.primo + dia2.primo).toBe(0);
   });
 
   it('el efectivo esperado parte de lo que la caja traia, no del fondo teorico', () => {
@@ -366,12 +370,12 @@ describe('cerrarCorte', () => {
   });
 
   it('congela los precios con los que se calculo', () => {
-    expect(corte.precios).toEqual({ calle: 2000, mayoreo: 1400 });
+    expect(corte.precios).toEqual({ calle: 2000, mayoreo: 1400, litro: 3500 });
   });
 
   it('congela el reparto: no se recalcula al leerlo', () => {
     expect(corte.reparto.utilidad).toBe(27500);
-    expect(corte.reparto.fran).toBe(13750);
+    expect(corte.reparto.fran).toBe(27500);
   });
 
   it('guarda el fondo vigente para que el corte se explique solo dentro de un año', () => {
@@ -404,7 +408,7 @@ describe('cerrarCorte', () => {
     expect(ingresoDeFecha(despues, FECHA, PRECIOS_INICIALES).total).toBe(0);
     // ...pero el corte cerrado sigue diciendo lo mismo que la noche que se cerro.
     expect(corte.ingreso.total).toBe(36000);
-    expect(corte.reparto.fran).toBe(13750);
+    expect(corte.reparto.fran).toBe(27500);
   });
 });
 
@@ -610,9 +614,17 @@ describe('validarBorrador y validarPrecios', () => {
   });
 
   it('los precios corruptos caen a los de fabrica, nunca a cero', () => {
-    expect(validarPrecios(null)).toEqual({ calle: 2000, mayoreo: 1400 });
-    expect(validarPrecios({ calle: 0, mayoreo: 'gratis' })).toEqual({ calle: 2000, mayoreo: 1400 });
-    expect(validarPrecios({ calle: 2500, mayoreo: 1600 })).toEqual({ calle: 2500, mayoreo: 1600 });
+    expect(validarPrecios(null)).toEqual({ calle: 2000, mayoreo: 1400, litro: 3500 });
+    expect(validarPrecios({ calle: 0, mayoreo: 'gratis' })).toEqual({
+      calle: 2000,
+      mayoreo: 1400,
+      litro: 3500,
+    });
+    expect(validarPrecios({ calle: 2500, mayoreo: 1600 })).toEqual({
+      calle: 2500,
+      mayoreo: 1600,
+      litro: 3500,
+    });
   });
 });
 
@@ -641,13 +653,64 @@ describe('resumenCorte', () => {
         '- Gasolina: $45.00',
         '',
         'Utilidad: $275.00',
-        'Fran: $137.50',
-        'Primo: $137.50',
+        'Tu utilidad: $275.00',
         '',
         'Caja: dejar $320.00 (200.00 gasto + 120.00 cambio)',
         'Efectivo esperado al cerrar: $595.00',
       ].join('\n')
     );
+  });
+
+  it('con apartado y un solo dueño no repite la cifra: se aparto y luego tu utilidad', () => {
+    const corte = cerrarCorte({
+      borrador: borradorCon([MAMA_JUANI, GASOLINA]),
+      ingreso: ingresoDeFecha(loteDe18(), FECHA, PRECIOS_INICIALES),
+      precios: PRECIOS_INICIALES,
+      device: 'dev1',
+      cerradoEn: `${FECHA}T22:10:00-07:00`,
+      apartado: 4500,
+    });
+    const texto = resumenCorte(corte);
+    expect(texto).toContain(['Utilidad: $275.00', 'Se apartó: $45.00', 'Tu utilidad: $230.00'].join('\n'));
+    expect(texto).not.toContain('Se reparte');
+  });
+
+  it('un corte viejo con primo y apartado se imprime exactamente como antes', () => {
+    const base = cerrarCorte({
+      borrador: borradorCon([MAMA_JUANI, GASOLINA]),
+      ingreso: ingresoDeFecha(loteDe18(), FECHA, PRECIOS_INICIALES),
+      precios: PRECIOS_INICIALES,
+      device: 'dev1',
+      cerradoEn: `${FECHA}T22:10:00-07:00`,
+      apartado: 4500,
+    });
+    const viejo = { ...base, reparto: { ...base.reparto, fran: 11500, primo: 11500 } };
+    expect(resumenCorte(viejo)).toContain(
+      [
+        'Utilidad: $275.00',
+        'Se apartó: $45.00',
+        'Se reparte: $230.00',
+        'Fran: $115.00',
+        'Primo: $115.00',
+      ].join('\n')
+    );
+  });
+
+  it('resumenCorte de un corte cerrado con primo viejo sigue mostrando la linea Primo', () => {
+    const nuevo = cerrarCorte({
+      borrador: borradorCon([MAMA_JUANI, GASOLINA]),
+      ingreso: ingresoDeFecha(loteDe18(), FECHA, PRECIOS_INICIALES),
+      precios: PRECIOS_INICIALES,
+      device: 'dev1',
+      cerradoEn: `${FECHA}T22:10:00-07:00`,
+    });
+    expect(resumenCorte(nuevo)).not.toContain('Primo');
+
+    const viejo = { ...nuevo, reparto: { ...nuevo.reparto, fran: 13750, primo: 13750 } };
+    const texto = resumenCorte(viejo);
+    expect(texto).toContain('Fran: $137.50');
+    expect(texto).toContain('Primo: $137.50');
+    expect(texto).not.toContain('Tu utilidad');
   });
 
   it('incluye el mayoreo solo cuando hubo', () => {
@@ -677,5 +740,59 @@ describe('resumenCorte', () => {
 
     const debiendo = resumenCorte(cerrarCorte({ ...base, caja: { hay: 38000, deuda: 2500 } }));
     expect(debiendo).toContain('Debemos a la caja: $25.00');
+  });
+});
+
+// ---------- litro ----------
+
+describe('litro en el corte', () => {
+  const cierre = (eventos: AppEvent[]) =>
+    cerrarCorte({
+      borrador: borradorCon([MAMA_JUANI]),
+      ingreso: ingresoDeFecha(eventos, FECHA, PRECIOS_INICIALES),
+      precios: PRECIOS_INICIALES,
+      device: 'dev1',
+      cerradoEn: `${FECHA}T22:10:00-07:00`,
+    });
+
+  it('ingresoDeFecha suma litros x 3500 sin tocar calle', () => {
+    const eventos: AppEvent[] = [
+      venta({ id: 'v1', qty: 10 }),
+      venta({ id: 'v2', qty: 4, product: 'litro' }),
+    ];
+    const ingreso = ingresoDeFecha(eventos, FECHA, PRECIOS_INICIALES);
+
+    expect(ingreso.litro).toEqual({ piezas: 4, centavos: 14000 });
+    expect(ingreso.calle.piezas).toBe(10);
+    expect(ingreso.total).toBe(10 * 2000 + 14000);
+  });
+
+  it('un litro anulado no entra', () => {
+    const eventos: AppEvent[] = [
+      venta({ id: 'v2', qty: 4, product: 'litro' }),
+      { id: 'x1', type: 'void', ts: `${FECHA}T18:00:00-07:00`, refId: 'v2', device: 'dev1' },
+    ];
+    expect(ingresoDeFecha(eventos, FECHA, PRECIOS_INICIALES).litro.piezas).toBe(0);
+  });
+
+  it('validarPrecios sin litro usa 3500', () => {
+    expect(validarPrecios({ calle: 2000, mayoreo: 1400 }).litro).toBe(3500);
+  });
+
+  it('validarCorte de un corte viejo sin ingreso.litro conserva su total', () => {
+    const corte = cierre(loteDe18());
+    const viejo = JSON.parse(JSON.stringify(corte));
+    delete viejo.ingreso.litro;
+    delete viejo.precios.litro;
+    const leido = validarCorte(viejo);
+
+    expect(leido?.ingreso.litro).toEqual({ piezas: 0, centavos: 0 });
+    expect(leido?.ingreso.total).toBe(corte.ingreso.total);
+  });
+
+  it('resumenCorte muestra la linea de litros solo si hay litros', () => {
+    expect(resumenCorte(cierre(loteDe18()))).not.toContain('Litros');
+    const con = resumenCorte(cierre([venta({ id: 'v2', qty: 4, product: 'litro' })]));
+    expect(con).toContain('Litros: 4 × $35.00 = $140.00');
   });
 });

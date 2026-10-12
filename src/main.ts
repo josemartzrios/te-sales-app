@@ -1,16 +1,15 @@
 import './estilos.css';
-import type { AppEvent, ArchivoExport, Canal, Settings, Vendedor } from './tipos';
-import type { CorreccionLugar, Rango } from './dominio';
+import type { AppEvent, ArchivoExport, Canal, Producto, Settings, Vendedor } from './tipos';
+import type { CorreccionLugar, PlanConteo, Rango } from './dominio';
 import {
   LARGO_MAXIMO_TEXTO,
   NOMBRE_APP,
+  PRODUCTOS,
   VENDEDORES,
-  anularUltimaVenta,
+  VENDEDOR_ACTIVO,
   claveFecha,
   crearAnulacion,
   crearCarga,
-  crearTraspaso,
-  crearTurno,
   crearVenta,
   eventosDeArchivo,
   eventosDeHora,
@@ -94,8 +93,6 @@ import {
   abrirMayoreo,
   abrirMoverVenta,
   abrirRetro,
-  abrirSobranteConteo,
-  abrirTraspaso,
   destacarHielera,
   enfocarGasto,
   limpiar,
@@ -108,6 +105,8 @@ import {
   vistaStats,
   vistaVender,
 } from './ui';
+import type { Quedan, SobranteConteo } from './vender';
+import { NOMBRE_PRODUCTO, abrirSobranteConteo } from './vender';
 
 const TAMANO_MAXIMO_IMPORT = 5 * 1024 * 1024;
 
@@ -142,21 +141,19 @@ const estado: {
    * "Volver" tiene que devolver al sitio del que se vino, no a uno fijo.
    */
   vistaPrevia: Vista;
-  vendedor: Vendedor;
   fecha: string;
   fechaCorte: string;
   rango: Rango;
   canal: Canal | 'todo';
-  vendedorStats: Vendedor | 'todos';
+  productoStats: Producto | 'todos';
 } = {
   vista: 'vender',
   vistaPrevia: 'vender',
-  vendedor: ajustes.defaultVendor,
   fecha: claveFecha(new Date()),
   fechaCorte: claveFecha(new Date()),
   rango: 'hoy',
   canal: 'calle',
-  vendedorStats: 'todos',
+  productoStats: 'todos',
 };
 
 const SECUNDARIAS: readonly Vista[] = ['stats', 'ajustes'];
@@ -214,7 +211,7 @@ function registrarVenta(entrada: {
     ts: entrada.ts ?? isoLocal(new Date()),
     point: entrada.punto,
     channel: entrada.canal,
-    vendor: estado.vendedor,
+    vendor: VENDEDOR_ACTIVO,
     qty: entrada.qty,
     device: ajustes.deviceId,
     ...(entrada.retro === true ? { retro: true } : {}),
@@ -225,97 +222,73 @@ function registrarVenta(entrada: {
   destacarHielera();
 }
 
-/** Corregir un toque de mas no pide confirmacion: el propio -1 es la correccion de un error rapido,
- *  y si tambien se toca por error basta un +1. Todo queda en el historico. */
-function restarUna(punto: string): void {
-  const anulacion = anularUltimaVenta(
-    eventos,
-    punto,
-    claveFecha(new Date()),
-    estado.vendedor,
-    ajustes.deviceId,
-    isoLocal(new Date())
-  );
-  if (anulacion === null) {
-    toast(`No hay ventas de ${estado.vendedor} hoy en ${punto}`);
-    return;
-  }
-  if (!aplicarEventos([...eventos, anulacion])) return;
-  toast(`Última venta de ${estado.vendedor} anulada`);
-  render();
-  destacarHielera();
+/** El conteo de un producto en la forma que pide `planConteo`: solo el vendedor activo conto. */
+function conteoDelActivo(cuenta: number | null): Record<Vendedor, number | null> {
+  const contado = Object.fromEntries(VENDEDORES.map((v) => [v, null])) as Record<
+    Vendedor,
+    number | null
+  >;
+  contado[VENDEDOR_ACTIVO] = cuenta;
+  return contado;
+}
+
+/** "5 botellas · 2 litros": lo que se registro, por producto y sin los que no se movieron. */
+function textoPiezas(piezas: Partial<Record<Producto, number>>): string {
+  return PRODUCTOS.filter((x) => (piezas[x] ?? 0) > 0)
+    .map((x) => `${piezas[x]} ${NOMBRE_PRODUCTO[x].plural}`)
+    .join(' · ');
 }
 
 /**
- * Marcar lugar abre el turno de los dos: salen juntos al mismo punto y el registro es de un solo
- * telefono, asi que pedir el lugar dos veces solo serviria para que se olvide la segunda y las
- * ventas del otro queden fuera de turno.
+ * La captura principal: "estuve en la Plazuela desde las cinco y quedan ocho". Cuenta lo que
+ * queda en la hielera de cada producto, `planConteo` saca lo vendido de cada una, y se escribe el
+ * turno a esa hora mas una venta por producto con lo suyo.
  *
- * Los dos turnos comparten la marca de tiempo porque llegaron juntos; ordenarPorHora desempata
- * por id. Al que ya estaba en ese punto no se le escribe nada: un evento repetido partiria en
- * dos un rato que fue uno solo.
+ * Si algun producto cuenta de mas, no se escribe nada de ninguno: se ofrece cargar ese producto.
  */
-function marcarLugar(punto: string): void {
-  const hoy = claveFecha(new Date());
-  const ts = isoLocal(new Date());
-  const llegan = VENDEDORES.filter((v) => turnoActual(eventos, v, hoy)?.point !== punto);
-
-  if (llegan.length === 0) {
-    toast(`Ya están en ${punto}`);
-    return;
-  }
-  const turnos = llegan.map((v) =>
-    crearTurno({ ts, point: punto, vendor: v, device: ajustes.deviceId })
-  );
-  if (!aplicarEventos([...eventos, ...turnos])) return;
-  toast(`${llegan.join(' y ')} en ${punto}`);
-  render();
-}
-
-/**
- * La captura principal: "estuvimos en la Plazuela desde las cinco y quedan ocho". Cuenta lo que
- * queda en cada hielera, `planConteo` saca lo vendido, y se escribe el turno de los dos a esa
- * hora mas una venta por vendedor con lo suyo.
- */
-function registrarHora(datos: {
-  punto: string;
-  hora: string;
-  quedan: Record<Vendedor, number | null>;
-}): void {
+function registrarHora(datos: { punto: string; hora: string; quedan: Quedan }): void {
   const hoy = claveFecha(new Date());
   const ts = isoDesdeFechaYHora(hoy, datos.hora);
   if (ts === null) {
     toast('Hora invalida');
     return;
   }
-  for (const vendedor of VENDEDORES) {
-    const cuenta = datos.quedan[vendedor];
+  for (const producto of PRODUCTOS) {
+    const cuenta = datos.quedan[producto];
     if (cuenta !== null && (!Number.isInteger(cuenta) || cuenta < 0)) {
       toast('Cantidad invalida');
       return;
     }
   }
 
-  const plan = planConteo(eventos, hoy, datos.quedan);
-  if (plan.sobrantes.length > 0) {
-    abrirSobranteConteo(plan.sobrantes, (quien) =>
-      abrirCarga(quien, (a) => hieleraDe(eventos, a, hoy), cargarHielera)
-    );
+  const planes = PRODUCTOS.map((producto): { producto: Producto; plan: PlanConteo } => ({
+    producto,
+    plan: planConteo(eventos, hoy, conteoDelActivo(datos.quedan[producto]), producto),
+  }));
+
+  const sobrantes = planes.flatMap(({ producto, plan }): SobranteConteo[] =>
+    plan.sobrantes.map((linea) => ({ producto, linea }))
+  );
+  if (sobrantes.length > 0) {
+    abrirSobranteConteo(sobrantes, abrirCargaDe);
     return;
   }
 
+  const piezas: Partial<Record<Producto, number>> = Object.fromEntries(
+    planes.map(({ producto, plan }) => [producto, plan.piezas[VENDEDOR_ACTIVO]])
+  );
   const nuevos = eventosDeHora(eventos, {
     ts,
     fecha: hoy,
     point: datos.punto,
     device: ajustes.deviceId,
-    piezas: plan.piezas,
+    piezas,
   });
-  // Ya estaban ahi y el conteo no bajo: no hay nada que escribir, pero contar y que cuadre no es
+  // Ya estaba ahi y el conteo no bajo: no hay nada que escribir, pero contar y que cuadre no es
   // lo mismo que no haber contado, y el vendedor necesita ver la diferencia.
   if (nuevos.length === 0) {
     toast(
-      plan.lineas.every((l) => l.contado === null)
+      PRODUCTOS.every((x) => datos.quedan[x] === null)
         ? 'Nada que registrar'
         : `${datos.punto} ${datos.hora} · sin ventas`
     );
@@ -323,10 +296,9 @@ function registrarHora(datos: {
   }
   if (!aplicarEventos([...eventos, ...nuevos])) return;
 
+  const vendido = textoPiezas(piezas);
   toast(
-    plan.total === 0
-      ? `${datos.punto} · ${datos.hora}`
-      : `${datos.punto} ${datos.hora} · ${plan.total} pieza${plan.total === 1 ? '' : 's'}`
+    vendido === '' ? `${datos.punto} · ${datos.hora}` : `${datos.punto} ${datos.hora} · ${vendido}`
   );
   render();
   destacarHielera();
@@ -378,7 +350,7 @@ function corregirLugar(fecha: string, punto: string, hora: string): void {
   if (!aplicarEventos([...eventos, ...plan.eventos])) return;
   toast(
     plan.piezas === 0
-      ? `${plan.vendedores.join(' y ')} en ${punto} desde ${hora}`
+      ? `En ${punto} desde las ${hora}`
       : `${plan.piezas} piezas pasan a ${punto}`,
     2500
   );
@@ -395,9 +367,9 @@ type Atajo = { etiqueta: string; pie: string; hora: string };
  * vendi tres— se teclea, que es justo cuando el resumen de piezas hace falta.
  */
 function pedirCorreccionLugar(fecha: string): void {
-  const turno = turnoActual(eventos, estado.vendedor, fecha);
+  const turno = turnoActual(eventos, VENDEDOR_ACTIVO, fecha);
   const ultima =
-    turno === null ? null : ultimaVentaActiva(eventos, turno.point, fecha, estado.vendedor);
+    turno === null ? null : ultimaVentaActiva(eventos, turno.point, fecha, VENDEDOR_ACTIVO);
 
   const atajos = [
     ultima === null
@@ -418,42 +390,27 @@ function pedirCorreccionLugar(fecha: string): void {
   });
 }
 
-/**
- * Pasar botellas de una hielera a la otra para emparejarlas. No es una venta ni una carga:
- * el dia no gana ni pierde piezas, solo cambian de mano, y el ingreso del corte no se mueve.
- */
-function registrarTraspaso(from: Vendedor, to: Vendedor, qty: number): void {
-  const traspaso = crearTraspaso({
+/** Las cargas nuevas son siempre de quien vende hoy; solo cambia el producto. */
+function cargarHielera(producto: Producto, qty: number): void {
+  const carga = crearCarga({
     ts: isoLocal(new Date()),
-    from,
-    to,
+    vendor: VENDEDOR_ACTIVO,
     qty,
     device: ajustes.deviceId,
+    product: producto,
   });
-  if (traspaso === null) {
-    toast('Traspaso invalido');
-    return;
-  }
-  if (!aplicarEventos([...eventos, traspaso])) return;
-  const hoy = claveFecha(new Date());
-  const destino = hieleraDe(eventos, to, hoy);
-  toast(`${from} → ${to} ×${qty} · ${to} lleva ${destino.restante}`, 2500);
+  if (!aplicarEventos([...eventos, carga])) return;
+  const total = hieleraDe(eventos, VENDEDOR_ACTIVO, claveFecha(new Date()), producto);
+  const nombre = NOMBRE_PRODUCTO[producto].plural;
+  toast(`Carga ${qty} ${nombre} · traes ${total.restante}`, 2500);
   render();
   destacarHielera();
 }
 
-function cargarHielera(vendedor: Vendedor, qty: number): void {
-  const carga = crearCarga({
-    ts: isoLocal(new Date()),
-    vendor: vendedor,
-    qty,
-    device: ajustes.deviceId,
-  });
-  if (!aplicarEventos([...eventos, carga])) return;
-  const total = hieleraDe(eventos, vendedor, claveFecha(new Date()));
-  toast(`${vendedor} carga ${qty} · lleva ${total.restante} en la hielera`, 2500);
-  render();
-  destacarHielera();
+/** Abre Cargar hielera ya parado en un producto: el de la pantalla o el que salio sobrando. */
+function abrirCargaDe(producto: Producto): void {
+  const hoy = claveFecha(new Date());
+  abrirCarga(producto, (x) => hieleraDe(eventos, VENDEDOR_ACTIVO, hoy, x), cargarHielera);
 }
 
 function capturarCargaRetro(datos: DatosCargaRetro): void {
@@ -466,9 +423,15 @@ function capturarCargaRetro(datos: DatosCargaRetro): void {
     toast('Cantidad invalida');
     return;
   }
-  const carga = crearCarga({ ts, vendor: datos.vendedor, qty: datos.qty, device: ajustes.deviceId });
+  const carga = crearCarga({
+    ts,
+    vendor: datos.vendedor,
+    qty: datos.qty,
+    device: ajustes.deviceId,
+    product: datos.producto,
+  });
   if (!aplicarEventos([...eventos, carga])) return;
-  toast(`Carga retroactiva: ${datos.vendedor} ×${datos.qty}`);
+  toast(`Carga retroactiva: ${datos.qty} ${NOMBRE_PRODUCTO[datos.producto].plural}`);
   estado.fecha = datos.fecha;
   render();
 }
@@ -507,6 +470,10 @@ function capturarRetro(datos: DatosRetro): void {
     toast('Cantidad invalida');
     return;
   }
+  if (datos.producto === 'litro' && datos.canal !== 'calle') {
+    toast('El litro solo se vende en la calle');
+    return;
+  }
   const venta = crearVenta({
     ts,
     point: datos.punto,
@@ -515,6 +482,7 @@ function capturarRetro(datos: DatosRetro): void {
     qty: datos.qty,
     device: ajustes.deviceId,
     retro: true,
+    product: datos.producto,
   });
   if (!aplicarEventos([...eventos, venta])) return;
   toast(`Retroactiva: ${datos.punto} ×${datos.qty}`);
@@ -925,14 +893,16 @@ function cambiarApartado(gasolina: string): void {
   toast(`Se aparta ${importe(porGasolina)} de este día`);
 }
 
-function cambiarPrecios(calle: string, mayoreo: string): void {
-  const porCalle = centavosDesde(calle);
-  const porMayoreo = centavosDesde(mayoreo);
-  if (porCalle === null || porCalle < 1 || porMayoreo === null || porMayoreo < 1) {
+function cambiarPrecios(calle: string, mayoreo: string, litro: string): void {
+  const nuevos: Precios = {
+    calle: centavosDesde(calle) ?? 0,
+    mayoreo: centavosDesde(mayoreo) ?? 0,
+    litro: centavosDesde(litro) ?? 0,
+  };
+  if (nuevos.calle < 1 || nuevos.mayoreo < 1 || nuevos.litro < 1) {
     toast('Precio invalido');
     return;
   }
-  const nuevos: Precios = { calle: porCalle, mayoreo: porMayoreo };
   const error = escribirPrecios(nuevos);
   if (error !== null) {
     toast(error, 5000);
@@ -947,8 +917,7 @@ function cambiarPrecios(calle: string, mayoreo: string): void {
  * Cierre irreversible. Guarda el snapshot del ingreso calculado en este momento, no una
  * referencia a las ventas: corregir manana una venta de hoy no puede mover este corte.
  *
- * Tambien mueve la caja: aparta lo del dia, le abona su mitad a Primo y devuelve lo prestado
- * hasta donde alcance. Los movimientos van primero y el corte despues, porque el corte guarda
+ * Tambien mueve la caja: aparta lo del dia y le abona a Fran lo que le toca. Los movimientos van primero y el corte despues, porque el corte guarda
  * como quedo la caja: al reves guardaria un snapshot de algo que todavia no pasaba.
  */
 function cerrarCorteDelDia(): void {
@@ -972,10 +941,8 @@ function cerrarCorteDelDia(): void {
     `Cerrar el corte del ${fechaLegible(fecha)}?\n\n` +
       `Utilidad ${importe(reparto.utilidad)}\n` +
       `Se aparta ${importe(plan.totalApartado)}\n` +
-      `Se reparte ${importe(plan.repartible)}\n\n` +
-      `Tuyo ${importe(plan.fran)}\n` +
-      `Primo ${importe(plan.primo)}\n\n` +
-      'Cada mitad se va a su sobre. Un corte cerrado no se edita ni se borra.'
+      `Lo tuyo ${importe(plan.fran)}\n\n` +
+      'Se va a tu sobre. Un corte cerrado no se edita ni se borra.'
   );
   if (!confirmado) return;
 
@@ -1068,30 +1035,13 @@ function vistaActual(): HTMLElement {
       return vistaVender({
         eventos,
         ajustes,
-        vendedor: estado.vendedor,
         hoy,
         ahora,
-        alMarcarLugar: marcarLugar,
-        alCambiarVendedor: (v) => {
-          estado.vendedor = v;
-          render();
-        },
-        alVender: (punto, qty) =>
-          registrarVenta({ punto, canal: 'calle', qty, aviso: `+${qty} · ${punto}` }),
-        alRestar: restarUna,
-        alCorregirLugar: () => pedirCorreccionLugar(hoy),
         alAbrirMayoreo: () =>
           abrirMayoreo(ajustes.points, (punto, qty) =>
             registrarVenta({ punto, canal: 'mayoreo', qty, aviso: `Mayoreo ${punto} ×${qty}` })
           ),
-        alAbrirCarga: (v) =>
-          abrirCarga(v, (quien) => hieleraDe(eventos, quien, hoy), cargarHielera),
-        alAbrirTraspaso: () =>
-          abrirTraspaso(
-            estado.vendedor,
-            (quien) => hieleraDe(eventos, quien, hoy),
-            registrarTraspaso
-          ),
+        alAbrirCarga: () => abrirCargaDe('botella'),
         alRegistrarHora: registrarHora,
         alIrA: irAVista,
       });
@@ -1109,7 +1059,7 @@ function vistaActual(): HTMLElement {
         alMoverVenta: pedirLugarDeVenta,
         alCorregirLugar: () => pedirCorreccionLugar(estado.fecha),
         alAbrirRetro: () => abrirRetro(ajustes, estado.fecha, capturarRetro),
-        alAbrirCargaRetro: () => abrirCargaRetro(ajustes, estado.fecha, capturarCargaRetro),
+        alAbrirCargaRetro: () => abrirCargaRetro(estado.fecha, capturarCargaRetro),
         alIrA: irAVista,
       });
     case 'caja':
@@ -1155,7 +1105,7 @@ function vistaActual(): HTMLElement {
         ajustes,
         rango: estado.rango,
         canal: estado.canal,
-        vendedor: estado.vendedorStats,
+        producto: estado.productoStats,
         ahora,
         alCambiarRango: (r) => {
           estado.rango = r;
@@ -1165,8 +1115,8 @@ function vistaActual(): HTMLElement {
           estado.canal = c;
           render();
         },
-        alCambiarVendedor: (v) => {
-          estado.vendedorStats = v;
+        alCambiarProducto: (x) => {
+          estado.productoStats = x;
           render();
         },
         alVolver: () => irAVista(estado.vistaPrevia),
@@ -1179,12 +1129,6 @@ function vistaActual(): HTMLElement {
         alDescargarRespaldo: descargarRespaldo,
         alAgregarPunto: agregarPunto,
         alQuitarPunto: eliminarPunto,
-        alCambiarVendedorDefecto: (v) => {
-          if (aplicarAjustes({ ...ajustes, defaultVendor: v })) {
-            estado.vendedor = v;
-            render();
-          }
-        },
         alExportar: exportar,
         alCompartir: () => void compartirResumen(),
         alImportar: (archivo) => void importar(archivo),

@@ -12,6 +12,7 @@ import {
   movimientoDeArqueo,
   movimientoDeCobro,
   movimientosDeCierre,
+  sobresVisibles,
   movimientosDeGasto,
   movimientosDeSemana,
   movimientosRecientes,
@@ -304,15 +305,16 @@ describe('planCaja', () => {
    * pagados con dinero del fondo. Ese dia aparto 85 para la gasolina, y su cuenta con la mano da
    * 60.50 para cada uno.
    */
-  it('el dia real de Fran: 60.50 para cada quien, no 0 y 103', () => {
+  it('el dia real de Fran: 121 son todos suyos', () => {
     const reparto = calcularReparto(36000, [{ id: 'g', concepto: 'Te', centavos: 15400 }]);
     const plan = planCaja({ ...base, utilidad: reparto.utilidad, deuda: 15400 });
 
     expect(importe(reparto.utilidad)).toBe('$206.00');
     expect(plan.totalApartado).toBe(8500);
     expect(importe(plan.repartible)).toBe('$121.00');
-    expect(importe(plan.fran)).toBe('$60.50');
-    expect(importe(plan.primo)).toBe('$60.50');
+    expect(importe(plan.fran)).toBe('$121.00');
+    expect(importe(plan.primo)).toBe('$0.00');
+    expect(plan.seQuedaEnCaja).toBe(plan.totalApartado);
   });
 
   /**
@@ -324,17 +326,16 @@ describe('planCaja', () => {
     const plan = planCaja({ apartado: APARTADO_VACIO, deuda: 0, utilidad: reparto.utilidad });
     expect(plan.totalApartado).toBe(0);
     expect(plan.repartible).toBe(32000);
-    expect(plan.fran).toBe(16000);
-    expect(plan.primo).toBe(16000);
+    expect(plan.fran).toBe(32000);
+    expect(plan.primo).toBe(0);
   });
 
-  it('el apartado sale antes de repartir: lo pagan los dos, no solo Fran', () => {
+  it('el apartado sale antes de repartir', () => {
     const plan = planCaja({ ...base, utilidad: 70000 });
     expect(plan.totalApartado).toBe(8500);
     expect(plan.repartible).toBe(70000 - 8500);
-    // Mitades iguales. Antes Primo cobraba 35000 completos y Fran financiaba los 8500.
-    expect(plan.fran).toBe(30750);
-    expect(plan.primo).toBe(30750);
+    expect(plan.fran).toBe(70000 - 8500);
+    expect(plan.primo).toBe(0);
   });
 
   it('la deuda no se cobra en el reparto: el gasto ya la pago', () => {
@@ -349,13 +350,14 @@ describe('planCaja', () => {
 
   it('lo que se queda mas lo que se lleva Fran es la utilidad completa: no se pierde un peso', () => {
     const plan = planCaja({ ...base, utilidad: 70000, deuda: 2500 });
+    expect(plan.seQuedaEnCaja).toBe(plan.totalApartado);
     expect(plan.seQuedaEnCaja + plan.fran).toBe(70000);
   });
 
-  it('el centavo impar se lo queda Fran, que trae la caja', () => {
+  it('un centavo impar es completo de Fran', () => {
     const plan = planCaja({ apartado: APARTADO_VACIO, deuda: 0, utilidad: 101 });
-    expect(plan.fran).toBe(51);
-    expect(plan.primo).toBe(50);
+    expect(plan.fran).toBe(101);
+    expect(plan.primo).toBe(0);
   });
 
   /**
@@ -385,15 +387,15 @@ describe('planCaja', () => {
     const plan = planCaja({ ...base, utilidad: 6000 });
     expect(plan.totalApartado).toBe(8500);
     expect(plan.repartible).toBe(-2500);
-    expect(plan.fran).toBe(-1250);
-    expect(plan.primo).toBe(-1250);
+    expect(plan.fran).toBe(-2500);
+    expect(plan.primo).toBe(0);
   });
 
-  it('un dia en perdida lo absorben los dos, mitad y mitad', () => {
+  it('un dia en perdida lo absorbe Fran completo', () => {
     const plan = planCaja({ apartado: APARTADO_VACIO, deuda: 0, utilidad: -5000 });
     expect(plan.apartados).toEqual([]);
-    expect(plan.fran).toBe(-2500);
-    expect(plan.primo).toBe(-2500);
+    expect(plan.fran).toBe(-5000);
+    expect(plan.primo).toBe(0);
   });
 
   it('el campo en cero no genera linea de apartado', () => {
@@ -410,9 +412,10 @@ describe('movimientosDeCierre', () => {
   const entrada = { fecha: FECHA, ts: `${FECHA}T22:00:00-07:00`, device: 'dev1' };
   const plan = planCaja({ utilidad: 70000, deuda: 0, apartado: { gasolina: 8500 } });
 
-  it('aparta la gasolina y la mitad de cada socio', () => {
+  it('aparta la gasolina y lo de Fran', () => {
     const movs = movimientosDeCierre({ ...entrada, plan });
-    expect(movs.map((m) => m.sobre)).toEqual(['gasolina', 'fran', 'primo']);
+    expect(movs.map((m) => m.sobre)).toEqual(['gasolina', 'fran']);
+    expect(movs[1]?.concepto).toMatch(/^Del /);
     expect(movs.every((m) => m.tipo === 'apartado')).toBe(true);
     expect(estadoCaja(movs).hay).toBe(32000 + 70000);
   });
@@ -428,11 +431,40 @@ describe('movimientosDeCierre', () => {
    * Lo que faltaba cuando Fran no tenia sobre: su mitad del mal dia se evaporaba y terminaba
    * absorbiendo la perdida completa el dia que volvia a haber utilidad.
    */
-  it('un dia en perdida le baja el acumulado a LOS DOS, no solo a Primo', () => {
+  it('dia malo: repartible negativo baja solo el sobre fran', () => {
     const malo = planCaja({ utilidad: -5000, deuda: 0, apartado: APARTADO_VACIO });
     const movs = movimientosDeCierre({ ...entrada, plan: malo });
-    expect(saldoDe(movs, 'fran').hay).toBe(-2500);
-    expect(saldoDe(movs, 'primo').hay).toBe(-2500);
+    expect(saldoDe(movs, 'fran').hay).toBe(-5000);
+    expect(saldoDe(movs, 'primo').hay).toBe(0);
+  });
+
+  it('movimientosDeCierre no emite movimiento primo', () => {
+    const movs = movimientosDeCierre({ ...entrada, plan });
+    expect(movs.some((m) => m.sobre === 'primo')).toBe(false);
+  });
+
+  it('sobresVisibles oculta primo en cero y lo muestra con saldo pendiente', () => {
+    const vacio = estadoCaja([]);
+    expect(sobresVisibles(vacio)).not.toContain('primo');
+    expect(sobresVisibles(vacio)).toContain('fran');
+    const conSaldo = estadoCaja([mov('apartado', 'primo', 13750)]);
+    expect(sobresVisibles(conSaldo)).toContain('primo');
+    const debiendo = estadoCaja([mov('apartado', 'primo', -2500)]);
+    expect(sobresVisibles(debiendo)).toContain('primo');
+  });
+
+  it('sobresVisibles muestra a primo si su saldo se presto entero: hay 0 pero se le debe', () => {
+    const prestado = estadoCaja([
+      mov('apartado', 'primo', 13750),
+      mov('prestamo', 'primo', -13750),
+    ]);
+    expect(prestado.sobres.find((s) => s.sobre === 'primo')?.hay).toBe(0);
+    expect(sobresVisibles(prestado)).toContain('primo');
+  });
+
+  it('sobresVisibles oculta a primo cuando su saldo llego a cero por movimientos', () => {
+    const cobrado = estadoCaja([mov('apartado', 'primo', 13750), mov('pago', 'primo', -13750)]);
+    expect(sobresVisibles(cobrado)).not.toContain('primo');
   });
 
   it('sin mitad que repartir no escribe lineas de cero', () => {
@@ -497,8 +529,8 @@ describe('comprar un dia y vender al otro', () => {
     });
 
     const todos = [...movsLunes, ...movsMartes];
-    expect(importe(saldoDe(todos, 'fran').hay)).toBe('$60.50');
-    expect(importe(saldoDe(todos, 'primo').hay)).toBe('$60.50');
+    expect(importe(saldoDe(todos, 'fran').hay)).toBe('$121.00');
+    expect(saldoDe(todos, 'primo').hay).toBe(0);
   });
 });
 
@@ -847,6 +879,13 @@ describe('cajaParaEsperado', () => {
     expect(cajaParaEsperado([apartado, pago], HOY)).toBe(32000);
   });
 
+  it('cobrar lo tuyo hoy si se resta: Fran saco efectivo de la caja antes de contar', () => {
+    const apartado = conFecha(mov('apartado', 'fran', 50000), '2026-08-07');
+    const cobro = conFecha(mov('pago', 'fran', -30000), HOY);
+    // Al abrir habia 320 + 500; hoy cobro 300, asi que contra el bulto quedan 520.
+    expect(cajaParaEsperado([apartado, cobro], HOY)).toBe(32000 + 50000 - 30000);
+  });
+
   it('pagar gasolina hoy NO se resta aparte: ese dia tambien se captura como gasto', () => {
     const apartado = conFecha(mov('apartado', 'gasolina', 13500), '2026-08-07');
     const pago = conFecha(mov('pago', 'gasolina', -13500), HOY);
@@ -869,5 +908,20 @@ describe('resumenCaja', () => {
     const texto = resumenCaja(estadoCaja([]));
     expect(texto).toContain('La caja está al corriente');
     expect(texto).not.toContain('Debemos');
+  });
+});
+
+describe('resumenCaja y el sobre de Primo', () => {
+  it('sin saldo de Primo no imprime su linea', () => {
+    expect(resumenCaja(estadoCaja([]))).not.toContain('Sueldo de Primo');
+    const cobrado = estadoCaja([mov('apartado', 'primo', 13750), mov('pago', 'primo', -13750)]);
+    expect(resumenCaja(cobrado)).not.toContain('Sueldo de Primo');
+  });
+
+  it('con saldo de Primo (o prestado) si la imprime', () => {
+    const conSaldo = estadoCaja([mov('apartado', 'primo', 13750)]);
+    expect(resumenCaja(conSaldo)).toContain('Sueldo de Primo: $137.50');
+    const prestado = estadoCaja([mov('apartado', 'primo', 13750), mov('prestamo', 'primo', -13750)]);
+    expect(resumenCaja(prestado)).toContain('Sueldo de Primo: $0.00 de 137.50');
   });
 });

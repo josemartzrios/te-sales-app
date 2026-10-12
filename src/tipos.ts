@@ -1,5 +1,7 @@
 export type Vendedor = 'Fran' | 'Primo';
 export type Canal = 'calle' | 'mayoreo';
+/** Lo que se vende. Un evento sin `product` es botella: asi estan todos los historicos. */
+export type Producto = 'botella' | 'litro';
 
 export type SaleEvent = {
   id: string;
@@ -11,6 +13,7 @@ export type SaleEvent = {
   qty: number;
   device: string;
   retro?: true;
+  product?: Producto;
   /**
    * Lugar al que estuvo acreditada antes de corregirla. Solo lo traen las ventas que nacieron
    * de una correccion de lugar, y dice de donde vinieron: sin esto la linea nueva seria
@@ -35,6 +38,7 @@ export type LoadEvent = {
   vendor: Vendedor;
   qty: number;
   device: string;
+  product?: Producto;
 };
 
 /**
@@ -74,6 +78,10 @@ export type AppEvent = SaleEvent | VoidEvent | LoadEvent | ShiftEvent | Transfer
 
 export type Settings = {
   points: string[];
+  /**
+   * Ya no lo lee nada (vende uno solo). Se conserva solo para que los ajustes guardados de antes
+   * sigan cargando y validando igual.
+   */
   defaultVendor: Vendedor;
   deviceId: string;
 };

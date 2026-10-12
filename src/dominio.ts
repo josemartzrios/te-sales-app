@@ -2,6 +2,7 @@ import type {
   AppEvent,
   Canal,
   LoadEvent,
+  Producto,
   SaleEvent,
   Settings,
   ShiftEvent,
@@ -11,6 +12,11 @@ import type {
 } from './tipos';
 
 export const VENDEDORES: readonly Vendedor[] = ['Fran', 'Primo'];
+/** Quien vende hoy: los eventos nuevos se escriben a su nombre. */
+export const VENDEDOR_ACTIVO: Vendedor = 'Fran';
+/** Quienes venden hoy. VENDEDORES sigue completo para leer el historico (Primo). */
+export const VENDEDORES_ACTIVOS: readonly Vendedor[] = [VENDEDOR_ACTIVO];
+export const PRODUCTOS: readonly Producto[] = ['botella', 'litro'];
 export const CANALES: readonly Canal[] = ['calle', 'mayoreo'];
 export const PUNTOS_INICIALES: readonly string[] = ['Plazuela', 'Parque Sinaloa'];
 export const LARGO_MAXIMO_TEXTO = 100;
@@ -98,6 +104,11 @@ export function isoLocal(d: Date): string {
   );
 }
 
+/** Sin `product` es botella: asi estan escritos todos los eventos anteriores al litro. */
+export function productoDe(e: { product?: Producto }): Producto {
+  return e.product ?? 'botella';
+}
+
 // ---------- creacion de eventos ----------
 
 export function crearVenta(entrada: {
@@ -108,6 +119,7 @@ export function crearVenta(entrada: {
   qty: number;
   device: string;
   retro?: boolean;
+  product?: Producto;
 }): SaleEvent {
   const venta: SaleEvent = {
     id: nuevoId(entrada.device),
@@ -119,19 +131,20 @@ export function crearVenta(entrada: {
     qty: entrada.qty,
     device: entrada.device,
   };
-  return entrada.retro === true ? { ...venta, retro: true } : venta;
+  const conRetro: SaleEvent = entrada.retro === true ? { ...venta, retro: true } : venta;
+  return entrada.product === 'litro' ? { ...conRetro, product: 'litro' } : conRetro;
 }
 
 /**
- * Lo que escribe registrar de un jalon lo vendido en un rato: el turno de los dos a la hora que
- * se declara, y una venta por vendedor con lo que le toco.
+ * Lo que escribe registrar de un jalon lo vendido en un rato: el turno del vendedor activo a la
+ * hora que se declara, y una venta por producto con lo que se fue de cada hielera.
  *
  * Nace de que tocar +1 por botella tiene friccion en la calle. Las piezas ya no se teclean: se
  * cuenta lo que queda en la hielera y `planConteo` saca la resta. Aqui llegan ya en piezas.
  *
- * Las piezas se capturan POR VENDEDOR y no juntas a proposito: la hielera, el cuadre del dia y
- * las stats por persona viven de saber quien vendio que. Partir un total a la mitad inventaria
- * un dato que nadie conto y haria que el cuadre marcara rojo sin que hubiera error.
+ * Las piezas llegan POR PRODUCTO y no juntas a proposito: botellas y litros tienen hielera,
+ * cuadre y precio propios, y sumarlos en un solo numero haria imposible cobrarlos en el corte.
+ * Un producto ausente o en 0 no escribe venta.
  *
  * El turno solo se escribe si el vendedor no estaba ya en ese punto: registrar dos horas
  * seguidas del mismo lugar es un solo rato ahi, y un evento repetido lo partiria en dos.
@@ -147,12 +160,12 @@ export function eventosDeHora(
     fecha: string;
     point: string;
     device: string;
-    piezas: Readonly<Record<Vendedor, number>>;
+    piezas: Readonly<Partial<Record<Producto, number>>>;
   }
 ): AppEvent[] {
   const salida: AppEvent[] = [];
 
-  for (const vendedor of VENDEDORES) {
+  for (const vendedor of VENDEDORES_ACTIVOS) {
     if (turnoActual(eventos, vendedor, entrada.fecha)?.point === entrada.point) continue;
     salida.push(
       crearTurno({
@@ -164,28 +177,37 @@ export function eventosDeHora(
     );
   }
 
-  for (const vendedor of VENDEDORES) {
-    const qty = entrada.piezas[vendedor];
-    if (!Number.isInteger(qty) || qty <= 0) continue;
-    salida.push(
-      crearVenta({
-        ts: entrada.ts,
-        point: entrada.point,
-        channel: 'calle',
-        vendor: vendedor,
-        qty,
-        device: entrada.device,
-      })
-    );
+  for (const vendedor of VENDEDORES_ACTIVOS) {
+    for (const producto of PRODUCTOS) {
+      const qty = entrada.piezas[producto];
+      if (qty === undefined || !Number.isInteger(qty) || qty <= 0) continue;
+      salida.push(
+        crearVenta({
+          ts: entrada.ts,
+          point: entrada.point,
+          channel: 'calle',
+          vendor: vendedor,
+          qty,
+          device: entrada.device,
+          product: producto,
+        })
+      );
+    }
   }
 
   return salida;
 }
 
-/** Lo que un vendedor cuenta en su hielera al cerrar el rato, contra lo que el sistema creia. */
+/**
+ * Lo que el vendedor cuenta en la hielera de UN producto al cerrar el rato, contra lo que el
+ * sistema creia. Cada producto tiene su propia linea porque tiene su propia hielera.
+ */
 export type LineaConteo = {
   vendedor: Vendedor;
-  /** Lo que deberia traer segun sus cargas, sus traspasos y lo ya registrado como vendido. */
+  /**
+   * Lo que deberia traer segun sus cargas y lo ya registrado como vendido (y los traspasos, que
+   * solo existen en dias viejos).
+   */
   esperado: number;
   /** Lo que conto. null = no lo conto, y entonces a su hielera no se le toca nada. */
   contado: number | null;
@@ -197,12 +219,16 @@ export type LineaConteo = {
   sinCarga: boolean;
 };
 
+/**
+ * El conteo de un producto ya traducido a ventas. Hay una linea por vendedor activo (hoy solo
+ * Fran); `piezas` se lee con VENDEDOR_ACTIVO y nunca por el nombre de otro vendedor.
+ */
 export type PlanConteo = {
   lineas: LineaConteo[];
   /**
-   * Los que cuentan mas botellas de las que deberian traer. Fisicamente eso no sale de la nada:
-   * es una carga que no se registro. No se resuelve solo porque nadie sabe cuantas ni a que hora
-   * entraron, asi que el plan las senala y la captura se detiene ahi.
+   * Las lineas que cuentan mas piezas de las que deberian traer. Fisicamente eso no sale de la
+   * nada: es una carga que no se registro. No se resuelve solo porque nadie sabe cuantas ni a que
+   * hora entraron, asi que el plan las senala y la captura se detiene ahi.
    */
   sobrantes: LineaConteo[];
   piezas: Record<Vendedor, number>;
@@ -222,14 +248,17 @@ export type PlanConteo = {
  *
  * El campo vacio (null) NO es cero: es "a este no lo conte". Tratarlo como cero registraria la
  * hielera entera como vendida de un tecleo.
+ *
+ * Mira la hielera de un solo `producto`: la captura lo llama una vez por producto contado.
  */
 export function planConteo(
   eventos: readonly AppEvent[],
   clave: string,
-  contado: Readonly<Record<Vendedor, number | null>>
+  contado: Readonly<Record<Vendedor, number | null>>,
+  producto: Producto = 'botella'
 ): PlanConteo {
-  const lineas = VENDEDORES.map((vendedor): LineaConteo => {
-    const h = hieleraDe(eventos, vendedor, clave);
+  const lineas = VENDEDORES_ACTIVOS.map((vendedor): LineaConteo => {
+    const h = hieleraDe(eventos, vendedor, clave, producto);
     const cuenta = contado[vendedor];
     const diferencia = cuenta === null ? 0 : h.restante - cuenta;
     return {
@@ -275,8 +304,9 @@ export function crearCarga(entrada: {
   vendor: Vendedor;
   qty: number;
   device: string;
+  product?: Producto;
 }): LoadEvent {
-  return {
+  const carga: LoadEvent = {
     id: nuevoId(entrada.device),
     type: 'load',
     ts: entrada.ts,
@@ -284,6 +314,7 @@ export function crearCarga(entrada: {
     qty: entrada.qty,
     device: entrada.device,
   };
+  return entrada.product === 'litro' ? { ...carga, product: 'litro' } : carga;
 }
 
 /**
@@ -341,6 +372,7 @@ export function ultimaVentaActiva(
       (v) =>
         v.point === punto &&
         v.channel === 'calle' &&
+        productoDe(v) === 'botella' &&
         v.vendor === vendedor &&
         claveFecha(v.ts) === clave
     )
@@ -417,12 +449,13 @@ export type CorreccionLugar = {
  * marcar sigue vendiendo, y cada toque se le acredita al lugar de antes. Mover solo las ventas
  * dejaria el turno mintiendo; mover solo el turno dejaria las piezas donde no fueron.
  *
- * El lugar se le marca a los dos por la misma razon que al marcarlo en vivo: salen juntos y el
- * registro es de un solo telefono. Las ventas, en cambio, se corrigen vendedor por vendedor y
- * solo las del punto que cada quien traia mal, dentro de la ventana que va de `desde` hasta el
- * siguiente lugar que ese vendedor marco: mas alla el registro ya decia la verdad.
+ * Solo se corrige a quien vende hoy (`VENDEDORES_ACTIVOS`), igual que al marcar el lugar en
+ * vivo: escribirle un turno a Primo en un dia nuevo lo haria aparecer en Hoy sin haber vendido.
+ * Los turnos y ventas de Primo ya guardados en dias viejos no se tocan y se siguen leyendo igual.
+ * Las ventas se corrigen solo las del punto que se traia mal, dentro de la ventana que va de
+ * `desde` hasta el siguiente lugar que ese vendedor marco: mas alla el registro ya decia la verdad.
  *
- * null cuando no hay nada que corregir: los dos ya estaban ahi.
+ * null cuando no hay nada que corregir: ya estaba ahi.
  */
 export function planCorreccionLugar(
   eventos: readonly AppEvent[],
@@ -438,7 +471,7 @@ export function planCorreccionLugar(
   const vendedores: Vendedor[] = [];
   let piezas = 0;
 
-  for (const vendedor of VENDEDORES) {
+  for (const vendedor of VENDEDORES_ACTIVOS) {
     const equivocado = turnoEn(eventos, vendedor, entrada.desde);
     if (equivocado !== null && equivocado.point === entrada.punto) continue;
 
@@ -609,6 +642,11 @@ export function filtrarCanal(ventas: readonly SaleEvent[], canal: Canal | 'todo'
   return canal === 'todo' ? [...ventas] : ventas.filter((v) => v.channel === canal);
 }
 
+/** Deja solo las ventas de un producto: botellas y litros no se suman en la misma hielera. */
+export function filtrarProducto(ventas: readonly SaleEvent[], producto: Producto): SaleEvent[] {
+  return ventas.filter((v) => productoDe(v) === producto);
+}
+
 export function totalPiezas(ventas: readonly SaleEvent[]): number {
   return ventas.reduce((suma, v) => suma + v.qty, 0);
 }
@@ -715,14 +753,20 @@ export type Hielera = {
 export function hieleraDe(
   eventos: readonly AppEvent[],
   vendedor: Vendedor,
-  clave: string
+  clave: string,
+  producto: Producto = 'botella'
 ): Hielera {
   const delDia = <T extends { ts: string }>(lista: readonly T[]): T[] =>
     lista.filter((e) => claveFecha(e.ts) === clave);
 
-  const cargas = delDia(cargasActivas(eventos)).filter((c) => c.vendor === vendedor);
-  const ventas = delDia(ventasActivas(eventos)).filter((v) => v.vendor === vendedor);
-  const traspasos = delDia(traspasosActivos(eventos));
+  const cargas = delDia(cargasActivas(eventos)).filter(
+    (c) => c.vendor === vendedor && productoDe(c) === producto
+  );
+  const ventas = delDia(ventasActivas(eventos)).filter(
+    (v) => v.vendor === vendedor && productoDe(v) === producto
+  );
+  // Los traspasos solo existen entre hieleras de botella; el litro no se pasa de mano.
+  const traspasos = producto === 'botella' ? delDia(traspasosActivos(eventos)) : [];
 
   const suma = (lista: readonly { qty: number }[]): number =>
     lista.reduce((s, e) => s + e.qty, 0);
@@ -757,8 +801,28 @@ export function enHielera(
   return hieleraDe(eventos, vendedor, clave).restante;
 }
 
+/**
+ * Quienes salen en las pantallas de un dia: los que venden hoy, mas cualquiera que haya dejado
+ * algo escrito esa fecha. Asi un dia nuevo muestra un solo vendedor y un dia viejo con Primo se
+ * sigue leyendo completo, con los dos.
+ */
+export function vendedoresDelDia(eventos: readonly AppEvent[], clave: string): Vendedor[] {
+  const presentes = new Set<Vendedor>(VENDEDORES_ACTIVOS);
+  for (const e of eventos) {
+    if (e.type === 'void' || claveFecha(e.ts) !== clave) continue;
+    if (e.type === 'transfer') {
+      presentes.add(e.from);
+      presentes.add(e.to);
+    } else {
+      presentes.add(e.vendor);
+    }
+  }
+  return VENDEDORES.filter((v) => presentes.has(v));
+}
+
+/** Las hieleras de botella del dia, una por cada vendedor de `vendedoresDelDia`. */
 export function hieleras(eventos: readonly AppEvent[], clave: string): Hielera[] {
-  return VENDEDORES.map((v) => hieleraDe(eventos, v, clave));
+  return vendedoresDelDia(eventos, clave).map((v) => hieleraDe(eventos, v, clave));
 }
 
 /**
@@ -947,7 +1011,11 @@ export function porLugarYHora(ventas: readonly SaleEvent[]): Matriz {
 
 export type PanelVendedor = {
   vendedor: Vendedor;
+  /** La hielera de botellas. */
   hielera: Hielera;
+  /** La hielera de litros, aparte: no se suman piezas de tamanos distintos. */
+  litro: Hielera;
+  /** Botellas en la calle y en mayoreo. Los litros van en `litro.vendido`. */
   calle: number;
   mayoreo: number;
   ritmo: Ritmo;
@@ -967,6 +1035,7 @@ export function panelVendedor(
   const ventas = ventasActivas(eventos).filter(
     (v) => v.vendor === vendedor && claveFecha(v.ts) === clave
   );
+  const botellas = filtrarProducto(ventas, 'botella');
   const barrasPunto = porPunto(ventas, puntos);
   const barrasHora = porHora(ventas);
   const pico = [...barrasHora].sort(descendente)[0];
@@ -974,8 +1043,9 @@ export function panelVendedor(
   return {
     vendedor,
     hielera: hieleraDe(eventos, vendedor, clave),
-    calle: totalPiezas(ventas.filter((v) => v.channel === 'calle')),
-    mayoreo: totalPiezas(ventas.filter((v) => v.channel === 'mayoreo')),
+    litro: hieleraDe(eventos, vendedor, clave, 'litro'),
+    calle: totalPiezas(botellas.filter((v) => v.channel === 'calle')),
+    mayoreo: totalPiezas(botellas.filter((v) => v.channel === 'mayoreo')),
     ritmo: ritmo(ventas),
     porPunto: barrasPunto,
     porHora: barrasHora,
@@ -989,7 +1059,7 @@ export function panelesDelDia(
   clave: string,
   puntos: readonly string[]
 ): PanelVendedor[] {
-  return VENDEDORES.map((v) => panelVendedor(eventos, v, clave, puntos));
+  return vendedoresDelDia(eventos, clave).map((v) => panelVendedor(eventos, v, clave, puntos));
 }
 
 // ---------- validacion de datos externos (import) ----------
@@ -1023,7 +1093,10 @@ export function validarEvento(valor: unknown): AppEvent | null {
     const { vendor, qty } = valor as Record<string, unknown>;
     if (typeof vendor !== 'string' || !VENDEDORES.includes(vendor as Vendedor)) return null;
     if (typeof qty !== 'number' || !Number.isInteger(qty) || qty < 1) return null;
-    return { id, type: 'load', ts, vendor: vendor as Vendedor, qty, device };
+    const carga: LoadEvent = { id, type: 'load', ts, vendor: vendor as Vendedor, qty, device };
+    return (valor as Record<string, unknown>).product === 'litro'
+      ? { ...carga, product: 'litro' }
+      : carga;
   }
 
   if (type === 'shift') {
@@ -1062,9 +1135,13 @@ export function validarEvento(valor: unknown): AppEvent | null {
     device,
   };
   const conRetro: SaleEvent = retro === true ? { ...venta, retro: true } : venta;
+  const conProducto: SaleEvent =
+    (valor as Record<string, unknown>).product === 'litro'
+      ? { ...conRetro, product: 'litro' }
+      : conRetro;
   // El origen se conserva si viene bien escrito y se descarta si no: es una anotacion de
   // historico, no un dato del que dependa ninguna cuenta, y no vale perder la venta por el.
-  return textoValido(movedFrom) ? { ...conRetro, movedFrom } : conRetro;
+  return textoValido(movedFrom) ? { ...conProducto, movedFrom } : conProducto;
 }
 
 export function validarAjustes(valor: unknown, deviceId: string): Settings {
@@ -1082,6 +1159,7 @@ export function validarAjustes(valor: unknown, deviceId: string): Settings {
 
   return {
     points: puntos.length > 0 ? puntos : [...PUNTOS_INICIALES],
+    // Ya no se lee en ningun lado: se valida solo para que los ajustes viejos sigan cargando.
     defaultVendor: VENDEDORES.includes(defaultVendor as Vendedor)
       ? (defaultVendor as Vendedor)
       : 'Fran',
